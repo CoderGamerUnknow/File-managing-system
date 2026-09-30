@@ -27,7 +27,16 @@ def check_report(config, watch_files: dict[str, bool]) -> str:
     """Human-readable view of the fully resolved config (the ``check`` command)."""
     lines: list[str] = []
     add = lines.append
-    add(f"  watch_folders: {config.expanded_watch_folders()}")
+    expanded = config.expanded_watch_folders()
+    resolved = config.resolved_watch_folders()
+    # The watched set is what the organizer will actually act on. Listing
+    # raw configured paths advertised missing folders as watched — the
+    # opposite of this command's job ("print what it actually sees"), so
+    # missing ones are called out explicitly (flaw #44, flaw #42's class).
+    add(f"  watch_folders: {[str(p) for p in resolved]}")
+    missing = [str(p) for p in expanded if not p.is_dir()]
+    if missing:
+        add(f"    CONFIGURED BUT MISSING (not watched): {missing}")
     add(
         f"  target_root:   "
         f"{config.resolved_target_root() if config.target_root else '~/Organized (default)'}"

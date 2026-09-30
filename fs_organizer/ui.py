@@ -89,12 +89,6 @@ class ActivityLog:
                 name = Path(path).name
             except (TypeError, ValueError):
                 name = str(path)
-        entry = {
-            "time": datetime.now().strftime("%H:%M:%S"),
-            "kind": kind,
-            "name": name,
-            "detail": detail,
-        }
         with self.lock:
             seq = self._next_seq
             self._next_seq += 1

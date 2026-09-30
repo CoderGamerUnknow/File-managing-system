@@ -2133,3 +2133,76 @@ class TestFlaw43PlanRowCategory:
         rows = [r for rows_ in data["groups"].values() for r in rows_]
         dashboard_category = next(r["category"] for r in rows if r["name"] == "a.txt")
         assert planned_category == entry["category"] == dashboard_category == "Documents"
+
+
+# ---------------------------------------------------------------- flaw #44
+class TestFlaw44CheckReportMissingFolders:
+    """check_report must not advertise configured-but-missing folders as
+    watched. Its docstring promises 'what it actually sees' and the command
+    exists to answer 'why is my file not moving?' — listing the raw expanded
+    list (flaw #42's class) hid exactly that answer. The report now shows
+    the resolved (watched) set and calls out missing entries explicitly."""
+
+    def test_missing_folder_called_out_not_listed_as_watched(self, tmp_path, capsys):
+        from fs_organizer.diagnostics import check_report
+
+        real = tmp_path / "watch"
+        real.mkdir(exist_ok=True)
+        ghost = tmp_path / "ghost"
+        cfg = make_config(tmp_path)
+        cfg.watch_folders = [str(real), str(ghost)]
+
+        report = check_report(cfg, {})
+        # Paths print inside a list -> Python repr (backslashes doubled).
+        assert repr(str(ghost)) not in report.splitlines()[0]
+        assert "CONFIGURED BUT MISSING" in report
+        assert repr(str(ghost)) in report  # but not hidden either
+
+    def test_all_present_no_missing_note(self, tmp_path):
+        from fs_organizer.diagnostics import check_report
+
+        cfg = make_config(tmp_path)
+        report = check_report(cfg, {})
+        assert "CONFIGURED BUT MISSING" not in report
+        assert repr(str(tmp_path / "watch")) in report
+
+    def test_matches_watch_diag_status(self, tmp_path):
+        """Neither surface may list a missing folder as watched: check calls
+        it out explicitly, watch-diag simply doesn't include it in files."""
+        from fs_organizer.diagnostics import check_report, watch_diag as _watch_diag
+
+        ghost = tmp_path / "ghost"
+        cfg = make_config(tmp_path)
+        cfg.watch_folders = [str(tmp_path / "watch"), str(ghost)]
+
+        report = check_report(cfg, {})
+        data = _watch_diag(cfg, [])
+        assert "CONFIGURED BUT MISSING" in report
+        assert str(ghost) not in data["files"]
+
+
+# ---------------------------------------------------------------- flaw #45
+class TestFlaw45ActivityLogEventShape:
+    """Every activity event must carry the full entry built under the lock:
+    seq, time, kind, name, detail. A pre-lock draft build that the locked
+    section rebuilt risked drift between the two copies (and wasted work);
+    pin the exact event shape consumers and tests rely on."""
+
+    REQUIRED_KEYS = {"seq", "time", "kind", "name", "detail"}
+
+    def test_event_has_all_keys(self):
+        from fs_organizer.ui import ActivityLog
+
+        log = ActivityLog()
+        log.add("moved", "a.txt", "-> out")
+        (event,) = log.snapshot()
+        assert self.REQUIRED_KEYS <= set(event)
+
+    def test_events_after_ring_wrap_still_complete(self):
+        from fs_organizer.ui import ActivityLog
+
+        log = ActivityLog(max_events=3)
+        for i in range(10):
+            log.add("moved", f"f{i}.txt")
+        for event in log.snapshot():
+            assert self.REQUIRED_KEYS <= set(event)

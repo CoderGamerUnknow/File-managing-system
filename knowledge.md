@@ -72,7 +72,7 @@ Entry points:
    `ConfigError` (exit code 2 from the CLI).
 5. `classify_with_ai` never raises; unknown/disallowed AI answers leave the file in place.
 6. Tests: `python -m pytest` must stay green; timing-sensitive regressions
-   live in `tests/test_flaw_regressions.py` (flaws #1–#43, one class each);
+   live in `tests/test_flaw_regressions.py` (flaws #1–#45, one class each);
    the shared `make_config` builder lives in `tests/helpers.py`.
 7. The dashboard must never bind beyond loopback, and its HTML must escape
    user-influenced strings (file names) before rendering — see `ui.py`.
