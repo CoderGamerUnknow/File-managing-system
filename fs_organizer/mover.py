@@ -247,11 +247,16 @@ def _plan_row(path: Path, category: str, config: Config, stat: os.stat_result) -
     ``stat`` is passed in so callers never need a second ``path.stat()`` —
     the caller has already guarded against ``OSError`` (a file that vanished
     between the scan and the read).
+
+    ``category`` is reported verbatim — the rule/AI category that decided
+    the plan. Deriving it from ``dest_dir.name`` would report the ``YYYY-MM``
+    month folder as the category when ``use_date_subfolders`` is on
+    (flaw #43, same class as the journal's #40).
     """
     dest_dir = destination_for(path, category, config)
     return {
         "name": path.name,
-        "category": dest_dir.name,
+        "category": category,
         "destination": dest_dir / path.name,
         "size": stat.st_size,
         "would_move": False,

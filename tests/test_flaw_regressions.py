@@ -2077,3 +2077,59 @@ class TestFlaw42RulesPayloadFolders:
         data = rules_payload(cfg)
         assert data["watch_folders"] == [str(tmp_path / "watch")]
         assert data["expanded_watch_folders"] == data["watch_folders"]
+
+
+# ---------------------------------------------------------------- flaw #43
+class TestFlaw43PlanRowCategory:
+    """plan()'s row category must be the rule category the plan decided on —
+    reported verbatim from the parameter the caller already computed.
+    _plan_row derived it from dest_dir.name, which with use_date_subfolders
+    reports the YYYY-MM month folder as the category (flaw #40's class, in
+    the public plan() preview API)."""
+
+    def test_plan_category_with_date_subfolders_is_rule_category(self, tmp_path):
+        from fs_organizer.mover import plan
+
+        cfg = make_config(tmp_path, use_date_subfolders=True)
+        src = tmp_path / "watch" / "a.txt"
+        src.write_text("x", encoding="utf-8")
+
+        data = plan(cfg)
+        (row,) = data["rows"]
+        assert row["category"] == "Documents"
+        assert not row["category"].startswith("20"), (
+            "plan reported the month folder as the category (flaw #43)"
+        )
+        # The destination still carries the date segment.
+        assert row["destination"].parent.name == "2026-09"
+
+    def test_plan_category_without_date_subfolders_unchanged(self, tmp_path):
+        from fs_organizer.mover import plan
+
+        cfg = make_config(tmp_path)
+        (tmp_path / "watch" / "a.txt").write_text("x", encoding="utf-8")
+
+        (row,) = plan(cfg)["rows"]
+        assert row["category"] == "Documents"
+
+    def test_plan_row_category_matches_move_and_journal(self, tmp_path):
+        """One decision, one category everywhere: plan preview, the move's
+        journal entry, and the dashboard all agree for the same file."""
+        from fs_organizer import journal
+        from fs_organizer.config import JournalConfig
+        from fs_organizer.mover import plan
+        from fs_organizer.views import files_payload
+
+        cfg = make_config(tmp_path, use_date_subfolders=True)
+        cfg.journal = JournalConfig(enabled=True, path=str(tmp_path / "j.jsonl"))
+        src = tmp_path / "watch" / "a.txt"
+        src.write_text("x", encoding="utf-8")
+
+        planned_category = plan(cfg)["rows"][0]["category"]
+        assert move_file(src, "Documents", cfg).moved
+
+        (entry,) = journal.read_entries(cfg.journal.resolved_path())
+        data = files_payload(cfg)
+        rows = [r for rows_ in data["groups"].values() for r in rows_]
+        dashboard_category = next(r["category"] for r in rows if r["name"] == "a.txt")
+        assert planned_category == entry["category"] == dashboard_category == "Documents"

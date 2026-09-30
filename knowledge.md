@@ -72,7 +72,7 @@ Entry points:
    `ConfigError` (exit code 2 from the CLI).
 5. `classify_with_ai` never raises; unknown/disallowed AI answers leave the file in place.
 6. Tests: `python -m pytest` must stay green; timing-sensitive regressions
-   live in `tests/test_flaw_regressions.py` (flaws #1–#42, one class each);
+   live in `tests/test_flaw_regressions.py` (flaws #1–#43, one class each);
    the shared `make_config` builder lives in `tests/helpers.py`.
 7. The dashboard must never bind beyond loopback, and its HTML must escape
    user-influenced strings (file names) before rendering — see `ui.py`.
@@ -92,7 +92,9 @@ Entry points:
     break a move. When enabled, its `ts` is the authoritative creation date
     the dashboard shows for organized files (mtime lies on birthtime-less
     filesystems), and its `category` is the rule/AI category that decided
-    the move — never the `YYYY-MM` date-subfolder (flaw #40).
+    the move — never the `YYYY-MM` date-subfolder (flaw #40). The same rule
+    binds every payload builder: report the deciding category verbatim,
+    never a path-derived lookalike (plan rows: flaw #43).
 12. Dashboard events carry a monotonic, gap-free `seq`. Incremental polling
     (`/api/events?since=N`) must never miss or duplicate events across
     ring-buffer wraps; clients detect ring-fall-off or a counter reset via
