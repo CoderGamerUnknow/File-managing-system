@@ -12,7 +12,7 @@ jobs:
   test:
     name: ${{ matrix.os }} · py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -24,9 +24,9 @@ jobs:
             python-version: "3.9"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -35,14 +35,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Show environment
-        run: python -c "import sys, watchdog, pytest; print(sys.version); print('watchdog', watchdog.__version__ if hasattr(watchdog, '__version__') else 'ok'); print('pytest', pytest.__version__)"
-
       - name: Run unit / regression tests
         run: python -m pytest -v --tb=short
 
       - name: Smoke test — dry-run + graceful shutdown
-        run: python scripts/smoke_dryrun.py
+        run: |
+          python scripts/smoke_dryrun.py 2>&1 | tee smoke_dryrun.log
+          exit ${PIPESTATUS[0]}
 
       - name: Smoke test — web dashboard
-        run: python scripts/smoke_ui.py
+        run: |
+          python scripts/smoke_ui.py 2>&1 | tee smoke_ui.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-diagnostics-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: |
+            smoke_*.log
+          if-no-files-found: ignore
+          retention-days: 7
