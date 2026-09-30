@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -126,6 +127,139 @@ class JournalConfig:
 
 
 @dataclass
+class AgePolicy:
+    """V2 file-age policy: don't organize files that are too new or too old.
+
+    ``min_age_seconds`` protects files still being written (a second line of
+    defense behind the debouncer); ``max_age_days`` keeps ancient files
+    where the user left them (a mailbox of 10-year-old downloads stays
+    put). 0 / None disable each bound. Both bounds are evaluated against
+    the file's mtime at decision time.
+    """
+
+    min_age_seconds: float = 0.0            # 0 = no lower bound
+    max_age_days: Optional[float] = None    # None = no upper bound
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "AgePolicy":
+        if not isinstance(data, dict):
+            raise ConfigInvalidError(
+                f"'age_policy' must be an object, got {type(data).__name__}"
+            )
+        return cls(
+            min_age_seconds=_coerce_non_negative_number(
+                data.get("min_age_seconds", 0.0), "age_policy.min_age_seconds"
+            ),
+            max_age_days=(
+                None
+                if data.get("max_age_days") is None
+                else _coerce_non_negative_number(
+                    data.get("max_age_days"), "age_policy.max_age_days"
+                )
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "min_age_seconds": self.min_age_seconds,
+            "max_age_days": self.max_age_days,
+        }
+
+    def violates(self, mtime: float, now: float) -> bool:
+        """True when the file's age is outside the allowed window."""
+        age = now - mtime
+        if age < self.min_age_seconds:
+            return True
+        if self.max_age_days is not None and age > self.max_age_days * 86400.0:
+            return True
+        return False
+
+
+@dataclass
+class DestinationTemplate:
+    """V2 destination template: where organized files land.
+
+    Tokens: ``{category}`` and ``{date:FORMAT}`` (FORMAT is a strftime
+    pattern applied to the file's mtime; default ``%Y-%m``). The template
+    is evaluated relative to the target root; ``{category}`` must appear
+    (otherwise every category would share one folder) and the resolved
+    path must stay inside the target root — the mover's traversal guard
+    enforces that on every move, and load_config refuses templates whose
+    static part escapes the root up front.
+    """
+
+    pattern: str = "{category}"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "DestinationTemplate":
+        if not isinstance(data, dict):
+            raise ConfigInvalidError(
+                f"'destination_template' must be an object, got {type(data).__name__}"
+            )
+        pattern = data.get("pattern", "{category}")
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise ConfigInvalidError(
+                "'destination_template.pattern' must be a non-empty string"
+            )
+        pattern = pattern.strip().replace("\\", "/")
+        if pattern.startswith("/"):
+            raise ConfigInvalidError(
+                "'destination_template.pattern' must be relative to the target root"
+            )
+        if "{category}" not in pattern:
+            raise ConfigInvalidError(
+                "'destination_template.pattern' must contain {category} — "
+                "otherwise every category would share one folder"
+            )
+        # Refuse strftime formats that produce path separators inside a
+        # single {date:...} token (e.g. %Y/%m is fine as separate text, but
+        # a slash inside the token would make the date a folder — that is
+        # the user's choice via the pattern text itself, not the format).
+        return cls(pattern=pattern)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"pattern": self.pattern}
+
+    def render(self, category: str, mtime: float) -> str:
+        """Render the template to a relative path (forward-slash separated).
+
+        Unknown tokens are left as literal text; malformed {date:...}
+        formats fall back to %Y-%m so a bad format can never crash a move.
+        """
+        out: list[str] = []
+        for part in self.pattern.split("/"):
+            rendered = part
+            if "{date" in part:
+                start = part.find("{date")
+                end = part.find("}", start)
+                if end == -1:
+                    fmt = "%Y-%m"
+                    rendered = (
+                        part[:start]
+                        + datetime.fromtimestamp(mtime).strftime(fmt)
+                        + part[end + 1 :]
+                    )
+                else:
+                    token = part[start : end + 1]
+                    spec = token[5:-1]  # strip {date and }
+                    fmt = spec[1:] if spec.startswith(":") and spec[1:] else "%Y-%m"
+                    try:
+                        rendered = (
+                            part[:start]
+                            + datetime.fromtimestamp(mtime).strftime(fmt)
+                            + part[end + 1 :]
+                        )
+                    except (ValueError, TypeError):
+                        rendered = (
+                            part[:start]
+                            + datetime.fromtimestamp(mtime).strftime("%Y-%m")
+                            + part[end + 1 :]
+                        )
+            out.append(rendered.replace("{category}", category))
+        return "/".join(out)
+
+
+@dataclass
 class Config:
     watch_folders: list[str] = field(default_factory=list)
     target_rules: dict[str, str] = field(default_factory=dict)
@@ -137,6 +271,8 @@ class Config:
     recursive: bool = False  # opt-in: also watch/organize subfolders of watch folders
     ai: AIConfig = field(default_factory=AIConfig)
     journal: JournalConfig = field(default_factory=JournalConfig)
+    age_policy: AgePolicy = field(default_factory=AgePolicy)
+    destination_template: DestinationTemplate = field(default_factory=DestinationTemplate)
 
     def resolved_watch_folders(self) -> list[Path]:
         """Existing watch folders, resolved (the set the organizer acts on)."""
@@ -195,6 +331,8 @@ class Config:
                 "enabled": self.journal.enabled,
                 "path": self.journal.path,
             },
+            "age_policy": self.age_policy.to_dict(),
+            "destination_template": self.destination_template.to_dict(),
         }
 
     def coverage_report(self) -> dict[str, object]:
@@ -369,6 +507,16 @@ def from_dict(data: dict[str, Any]) -> Config:
             )
         journal = JournalConfig.from_dict(journal_data)
 
+    age_data = data.get("age_policy")
+    age_policy = AgePolicy.from_dict(age_data) if age_data is not None else AgePolicy()
+
+    template_data = data.get("destination_template")
+    template = (
+        DestinationTemplate.from_dict(template_data)
+        if template_data is not None
+        else DestinationTemplate()
+    )
+
     return Config(
         watch_folders=watch_folders,
         target_rules=target_rules,
@@ -384,6 +532,8 @@ def from_dict(data: dict[str, Any]) -> Config:
         recursive=_coerce_bool(data.get("recursive", False), "recursive"),
         ai=ai,
         journal=journal,
+        age_policy=age_policy,
+        destination_template=template,
     )
 
 

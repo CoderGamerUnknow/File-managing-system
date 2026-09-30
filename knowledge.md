@@ -84,7 +84,16 @@ Entry points:
    `recursive: true` (explicit opt-in). Plans, diagnostics, and dashboard
    payloads must never advertise a scope the watcher does not act on —
    including per-file details like watch-diag's `matched_rules` (#41) and
-   the Rules card's watched-folder list (#42).
+   the Rules card's watched-folder list (#42). V2 additions live under the
+   same rule: the age policy surfaces as its own `age`/`would_skip_age`
+   decision, and plan rows report the template-rendered destination with
+   the deciding category verbatim (#43).
+14. V2 age policy (`age_policy`) and destination templates
+    (`destination_template`) are enforced inside `move_file` and pre-checked
+    in `_scan_files`/`_one_shot` — every consumer sees the same decision.
+    The template must contain `{category}` and stays relative to the target
+    root; the mover's traversal guard (#12) applies to rendered
+    destinations exactly as to plain ones.
 10. Config dumps are redacted: `to_dict()` never emits `ai.api_key` in
     cleartext (`check --json`, `watch-diag --json`).
 11. The move journal is owned solely by `journal.py` (append/read, torn-line

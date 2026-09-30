@@ -29,6 +29,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ from .rules import is_ignored, match_extension
 
 __all__ = [
     "MoveResult",
+    "age_policy_allows",
     "destination_for",
     "plan",
     "plan_actions",
@@ -133,12 +135,44 @@ def _unique_destination(dest: Path) -> Path:
 
 
 def destination_for(path: Path, category: str, config: Config) -> Path:
-    """Compute the destination directory for a file given its category."""
-    root = config.resolved_target_root() / category
-    if config.use_date_subfolders:
-        mtime = datetime.fromtimestamp(path.stat().st_mtime)
-        root = root / mtime.strftime("%Y-%m")
-    return root
+    """Compute the destination directory for a file given its category.
+
+    V2: ``destination_template`` drives the layout when set — the template
+    renders tokens (``{category}``, ``{date:FORMAT}``) against the file's
+    mtime and is resolved under the target root. The legacy
+    ``use_date_subfolders`` flag keeps working (it is exactly the template
+    ``{category}/{date:%Y-%m}``); the template wins if both are set.
+    """
+    root = config.resolved_target_root()
+    mtime = path.stat().st_mtime
+    template = getattr(config, "destination_template", None)
+    if template is not None and template.pattern != "{category}":
+        rel = template.render(category, mtime)
+        dest = root.joinpath(*rel.split("/"))
+    elif getattr(config, "use_date_subfolders", False):
+        dest = root / category / datetime.fromtimestamp(mtime).strftime("%Y-%m")
+    else:
+        dest = root / category
+    return dest
+
+
+def age_policy_allows(path: Path, config: Config, now: float | None = None) -> bool:
+    """V2 age policy gate: True when the file may be organized now.
+
+    Best-effort by design — a file that vanishes or an unreadable mtime
+    allows the move (the rest of the pipeline re-checks existence anyway);
+    failing closed here would turn a stat race into a stuck file.
+    """
+    policy = getattr(config, "age_policy", None)
+    if policy is None:
+        return True
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return True
+    if now is None:
+        now = time.time()
+    return not policy.violates(mtime, now)
 
 
 def _iter_files(folder: Path, recursive: bool):
@@ -218,12 +252,19 @@ def _scan_files(
             else:
                 category = match_extension(path, config.target_rules)
                 if category is not None:
-                    try:
-                        dest_dir = destination_for(path, category, config)
-                    except OSError:
-                        continue  # vanished between is_file() and stat()
-                    decision = "organize"
-                    destination = dest_dir / path.name
+                    if not age_policy_allows(path, config):
+                        # V2 age policy: matchable, but outside the age
+                        # window — reported as its own decision so plans
+                        # never advertise a move the organizer won't make.
+                        decision = "age"
+                        category = destination = None
+                    else:
+                        try:
+                            dest_dir = destination_for(path, category, config)
+                        except OSError:
+                            continue  # vanished between is_file() and stat()
+                        decision = "organize"
+                        destination = dest_dir / path.name
                 elif path.suffix.lower() in ai_extensions:
                     decision = "ai"
                     category = destination = None
@@ -323,11 +364,13 @@ def plan_actions(
             "would_organize": 0,
             "would_classify_ai": 0,
             "would_skip_pattern": 0,
+            "would_skip_age": 0,
             "would_skip_unknown": 0,
         },
         "would_organize": [],
         "would_classify_ai": [],
         "would_skip_pattern": [],
+        "would_skip_age": [],
         "would_skip_unknown": [],
     }
 
@@ -338,6 +381,7 @@ def plan_actions(
             "organize": "would_organize",
             "ai": "would_classify_ai",
             "pattern": "would_skip_pattern",
+            "age": "would_skip_age",
             "unknown": "would_skip_unknown",
         }[entry["decision"]]
         out["counts"][bucket] += 1
@@ -355,6 +399,8 @@ def plan_actions(
             )
         elif bucket == "pattern":
             out["would_skip_pattern"].append({"path": entry["path"], "reason": "ignored"})
+        elif bucket == "would_skip_age":
+            out["would_skip_age"].append({"path": entry["path"], "reason": "outside age policy"})
         else:
             out["would_skip_unknown"].append({"path": entry["path"], "reason": "no rule, not AI-able"})
 
@@ -443,6 +489,13 @@ def move_file(path: Path, category: str, config: Config) -> MoveResult:
     try:
         if is_ignored(path, config.effective_ignore_patterns()):
             return MoveResult(skipped=True, reason="ignored")
+
+        # V2 age policy: too-new (still being written) or too-old (user's
+        # archives) files stay where they are. Reported as a plain skip so
+        # callers treat it like any other "no action taken".
+        if not age_policy_allows(path, config):
+            logger.debug("Age policy: leaving %s in place", path.name)
+            return MoveResult(skipped=True, reason="outside age policy")
 
         dest_dir = destination_for(path, category, config)
         resolved_dest_dir = dest_dir.resolve()

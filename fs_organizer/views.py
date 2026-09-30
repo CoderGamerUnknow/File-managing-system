@@ -212,6 +212,8 @@ def status_payload(config) -> dict:
         "use_date_subfolders": config.use_date_subfolders,
         "recursive": config.recursive,
         "file_stable_seconds": config.file_stable_seconds,
+        "age_policy": config.age_policy.to_dict(),
+        "destination_template": config.destination_template.to_dict(),
         "ai": {
             "enabled": ai.enabled,
             "provider": ai.provider,

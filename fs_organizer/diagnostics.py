@@ -119,6 +119,7 @@ def watch_diag(config, watch_files: list[str]) -> dict[str, object]:
                 counts["would_organize"]
                 + counts["would_classify_ai"]
                 + counts["would_skip_pattern"]
+                + counts["would_skip_age"]
                 + counts["would_skip_unknown"]
             ),
             "ignored_by_name_rule": counts["would_skip_pattern"],

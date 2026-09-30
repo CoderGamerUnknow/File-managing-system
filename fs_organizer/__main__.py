@@ -97,6 +97,10 @@ def _one_shot(config, activity=None) -> int:
                 continue
             if not path.is_file():
                 continue  # _iter_files yields files, but stay defensive
+            from .mover import age_policy_allows
+
+            if not age_policy_allows(path, config):
+                continue  # V2 age policy: too new/old — leave in place
             category = match_extension(path, config.target_rules)
             if category is None and config.ai.enabled:
                 if path.suffix.lower() in config.ai.extensions:
