@@ -63,6 +63,10 @@ def main() -> int:
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace",
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+        # POSIX: own session/process group so SIGINT hits ONLY the child,
+        # never the runner's process group (CI runners run scripts under
+        # sh -e; an un-grouped SIGINT can kill the harness itself).
+        start_new_session=(os.name != "nt"),
     )
 
     failures: list[str] = []
@@ -113,8 +117,17 @@ def main() -> int:
         rc = None
     check("clean exit (KeyboardInterrupt shutdown path)", rc == 0, f"rc={rc}")
 
-    stdout = proc.stdout.read() if proc.stdout else ""
+    stdout = ""
+    try:
+        stdout = proc.stdout.read() if proc.stdout else ""
+    except Exception:
+        pass
     check("'Stopping...' printed (graceful path taken)", "Stopping..." in stdout)
+    # On failure, surface the child's own output — it is the only record of
+    # what the CLI did (tracebacks, log errors) when run.log says nothing.
+    if failures and stdout.strip():
+        print("\n--- child stdout (tail) ---")
+        print("\n".join(stdout.splitlines()[-40:]))
 
     log = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
     would_moves = [line for line in log.splitlines() if "[dry-run] Would move" in line]

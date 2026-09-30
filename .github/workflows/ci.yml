@@ -48,6 +48,17 @@ jobs:
           python scripts/smoke_ui.py 2>&1 | tee smoke_ui.log
           exit ${PIPESTATUS[0]}
 
+      - name: Publish diagnostics to step summary
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "### Smoke output (${{ matrix.os }} py${{ matrix.python-version }})"
+            echo '```'
+            cat smoke_dryrun.log smoke_ui.log 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
