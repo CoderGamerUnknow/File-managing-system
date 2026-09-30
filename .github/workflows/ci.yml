@@ -6,7 +6,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   test:
@@ -48,18 +48,28 @@ jobs:
           python scripts/smoke_ui.py 2>&1 | tee smoke_ui.log
           exit ${PIPESTATUS[0]}
 
-      - name: Publish diagnostics to step summary
+      - name: Commit diagnostics to ci-logs branch
         if: failure()
         shell: bash
         run: |
+          BRANCH="ci-logs-${{ matrix.os }}-py${{ matrix.python-version }}"
+          git config user.name "ci-diagnostics"
+          git config user.email "ci-diagnostics@users.noreply.github.com"
+          mkdir -p ci-logs
           {
-            echo "### Smoke output (${{ matrix.os }} py${{ matrix.python-version }})"
-            echo '```'
-            cat smoke_dryrun.log smoke_ui.log 2>/dev/null || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+            echo "run: ${{ github.run_id }}  sha: ${{ github.sha }}"
+            echo
+            echo "======== smoke_dryrun.log ========"
+            cat smoke_dryrun.log 2>/dev/null || echo "(missing)"
+            echo
+            echo "======== smoke_ui.log ========"
+            cat smoke_ui.log 2>/dev/null || echo "(missing)"
+          } > "ci-logs/${{ matrix.os }}-py${{ matrix.python-version }}.txt"
+          git add -f "ci-logs/${{ matrix.os }}-py${{ matrix.python-version }}.txt"
+          git commit -m "CI diagnostics: ${{ matrix.os }} py${{ matrix.python-version }} run ${{ github.run_id }}"
+          git push origin "HEAD:refs/heads/${BRANCH}" --force
 
-      - name: Upload diagnostics on failure
+      - name: Upload diagnostics artifact
         if: failure()
         uses: actions/upload-artifact@v4
         with:
