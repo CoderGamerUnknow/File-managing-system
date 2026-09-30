@@ -84,7 +84,9 @@ def main() -> int:
         return False
 
     print(f"Temp dir: {root}\n")
-    started = wait_log("Watching", 15)
+    # Generous startup budget: CI runners cold-start Python and watchdog
+    # far slower than a dev machine (a 15s budget flaked on windows-latest).
+    started = wait_log("Watching", 60)
     check("watcher started", started)
     if not started:
         proc.kill()
@@ -95,7 +97,7 @@ def main() -> int:
     # 1) Files created while running -> debounced, then dry-run logged.
     for i in range(3):
         (watch / f"early_{i}.txt").write_text(f"early {i}", encoding="utf-8")
-    check("early files handled in dry-run", wait_log("Would move", 10))
+    check("early files handled in dry-run", wait_log("Would move", 30))
 
     # 2) The drain scenario: create a file and shut down immediately, while it
     #    is still inside file_stable_seconds. Pre-fix (#19) it was dropped.
@@ -105,7 +107,7 @@ def main() -> int:
     else:
         proc.send_signal(signal.SIGINT)
     try:
-        rc = proc.wait(timeout=30)
+        rc = proc.wait(timeout=60)
     except subprocess.TimeoutExpired:
         proc.kill()
         rc = None

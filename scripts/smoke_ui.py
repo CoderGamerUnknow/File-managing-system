@@ -55,7 +55,8 @@ def main() -> int:
         # The CLI currently logs the fixed/default port (--port 0 is not
         # resolved to the ephemeral port in the log line). Find the real
         # port by scanning the log for "Dashboard running at".
-        deadline = time.monotonic() + 15
+        # CI runners can take a while to cold-start Python + the HTTP server.
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline and port is None:
             try:
                 log = (root / "run.log").read_text(encoding="utf-8", errors="replace")
@@ -71,8 +72,8 @@ def main() -> int:
             return 1
 
         base = f"http://127.0.0.1:{port}"
-        wait_for(lambda: urllib.request.urlopen(base, timeout=2).status == 200,
-                 10, "dashboard to come up")
+        wait_for(lambda: urllib.request.urlopen(base, timeout=5).status == 200,
+                 30, "dashboard to come up")
 
         # Drop two files while watching; the watcher should organize them.
         (watch / "doc.txt").write_text("hello", encoding="utf-8")
@@ -85,7 +86,7 @@ def main() -> int:
             data = json.loads(urllib.request.urlopen(base + "/api/events", timeout=2).read())
             names = {e["name"] for e in data["events"] if e["kind"] == "moved"}
             return {"doc.txt", "pic.png"} <= names
-        wait_for(events_ok, 15, "both watcher moves to appear in /api/events")
+        wait_for(events_ok, 45, "both watcher moves to appear in /api/events")
 
         status = json.loads(urllib.request.urlopen(base + "/api/status", timeout=2).read())
         # /api/files must now list the two organized files grouped by date.
@@ -134,7 +135,7 @@ def main() -> int:
     finally:
         proc.terminate()
         try:
-            proc.wait(timeout=10)
+            proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
             proc.kill()
 

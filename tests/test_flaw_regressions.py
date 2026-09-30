@@ -7,6 +7,7 @@ mover/watcher/pool/rules/config/ai/__main__/journal.
 import json
 import logging
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -329,23 +330,25 @@ class TestFlaw8DryRunCount:
 
 # ---------------------------------------------------------------- flaw #9
 class TestFlaw9IgnorePatternScope:
-    def test_name_pattern_never_matches_full_path(self):
-        # Name chosen with no 'e' and not starting with 'c', so name matching
-        # can't accidentally succeed — only full-path matching would.
-        p = Path(r"C:\Users\sharm\Downloads\IMG_0001.png")
-        assert is_ignored(p, ["c*"]) is False, "name glob matched the drive letter"
+    # Platform-agnostic paths: the name "IMG_0001.png" contains neither
+    # 'c' nor 'e', while the parent folder "cache" contains both — so if
+    # name patterns ever matched the full path (the flaw), the parent
+    # would satisfy the glob and the assertions would flip. On Windows the
+    # drive letter plays the parent's role; on POSIX the folder does.
+    def test_name_pattern_never_matches_full_path(self, tmp_path):
+        p = tmp_path / "cache" / "IMG_0001.png"
+        assert is_ignored(p, ["c*"]) is False, "name glob matched the path prefix"
         assert is_ignored(p, ["*e*"]) is False, "name glob matched the whole path"
 
-    def test_path_patterns_require_separator(self):
-        p = Path(r"C:\Users\sharm\Downloads\setup.exe")
+    def test_path_patterns_require_separator(self, tmp_path):
+        p = tmp_path / "Downloads" / "setup.exe"
         assert is_ignored(p, ["**/Downloads/**"]) is True
         assert is_ignored(p, [r"**\Downloads\**"]) is True  # backslashes normalized
         assert is_ignored(p, ["Downloads/*"]) is False  # no leading **
 
-    def test_name_patterns_still_work(self):
-        p = Path(r"C:\Users\sharm\Downloads\song.mp3.tmp")
-        assert is_ignored(p, ["*.tmp", "Thumbs.db"]) is True
-        assert is_ignored(Path(r"C:\x\.gitignore"), [".*"]) is True
+    def test_name_patterns_still_work(self, tmp_path):
+        assert is_ignored(tmp_path / "song.mp3.tmp", ["*.tmp", "Thumbs.db"]) is True
+        assert is_ignored(tmp_path / ".gitignore", [".*"]) is True
 
 
 # --------------------------------------------------------------- flaw #10
@@ -1223,6 +1226,8 @@ class TestFlaw32ResolveFormStableGuard:
 
     def test_move_with_extended_form_resolved_dest_succeeds(self, tmp_path, monkeypatch):
         """Even when resolve() hands back an extended-path dest, the move happens."""
+        if sys.platform != "win32":
+            pytest.skip("\\\\?\\ resolve() form is Windows-only")
         import fs_organizer.mover as mover
 
         cfg = make_config(tmp_path)
@@ -1514,6 +1519,10 @@ class TestFlaw37StagedCrossVolumeMove:
     """copy -> fsync -> rename -> delete so a crash can't duplicate data."""
 
     def test_cross_volume_decision_uses_splitdrive(self, tmp_path, monkeypatch):
+        # Drive-letter/UNC semantics only exist on Windows; on POSIX
+        # splitdrive always returns "" for the drive.
+        if sys.platform != "win32":
+            pytest.skip("drive-letter semantics are Windows-only")
         import fs_organizer.mover as mover
 
         assert mover._same_volume(Path("C:/a"), Path("C:/b"))
