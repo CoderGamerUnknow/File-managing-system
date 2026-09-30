@@ -110,9 +110,14 @@ def main() -> int:
         (watch / f"early_{i}.txt").write_text(f"early {i}", encoding="utf-8")
     check("early files handled in dry-run", wait_log("Would move", 30))
 
-    # 2) The drain scenario: create a file and shut down immediately, while it
-    #    is still inside file_stable_seconds. Pre-fix (#19) it was dropped.
+    # 2) The drain scenario: create a file, give the OS event pump a moment
+    #    to DELIVER it (inotify's callback thread races the signal on Linux;
+    #    Windows ReadDirectoryChangesW usually wins that race), then shut
+    #    down while the file is still inside file_stable_seconds. The
+    #    guarantee under test (flaw #19) is: a file SCHEDULED before stop()
+    #    is drained and processed — not that event delivery beats SIGINT.
     (watch / "late.txt").write_text("late", encoding="utf-8")
+    time.sleep(0.3)
     if os.name == "nt":
         os.kill(proc.pid, signal.CTRL_BREAK_EVENT)
     else:
