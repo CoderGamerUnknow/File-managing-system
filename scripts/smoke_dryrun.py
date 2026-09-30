@@ -58,10 +58,16 @@ def main() -> int:
         f" '--log-file', {str(log_path)!r}, '-v']\n"
         "runpy.run_module('fs_organizer', run_name='__main__')\n"
     )
+    # Child output goes to a FILE, not a pipe: under -v the CLI logs a lot
+    # (and Linux inotify emits more events than Windows), so an undrained
+    # 64 KB pipe fills and the child BLOCKS on its next log write — SIGINT
+    # then can't be processed and the shutdown check times out. A file has
+    # no capacity limit; it is read after the child exits.
+    child_out_path = root / "child_stdout.log"
+    child_out = open(child_out_path, "w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "-c", child_code],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
+        stdout=child_out, stderr=subprocess.STDOUT,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
         # POSIX: own session/process group so SIGINT hits ONLY the child,
         # never the runner's process group (CI runners run scripts under
@@ -94,7 +100,8 @@ def main() -> int:
     check("watcher started", started)
     if not started:
         proc.kill()
-        print((proc.stdout.read() if proc.stdout else "") or "(no child output)")
+        child_out.close()
+        print(child_out_path.read_text(encoding="utf-8", errors="replace") or "(no child output)")
         print(f"Artifacts kept for inspection: {root}")
         return 1
 
@@ -117,11 +124,11 @@ def main() -> int:
         rc = None
     check("clean exit (KeyboardInterrupt shutdown path)", rc == 0, f"rc={rc}")
 
-    stdout = ""
+    child_out.close()
     try:
-        stdout = proc.stdout.read() if proc.stdout else ""
-    except Exception:
-        pass
+        stdout = child_out_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        stdout = ""
     check("'Stopping...' printed (graceful path taken)", "Stopping..." in stdout)
     # On failure, surface the child's own output — it is the only record of
     # what the CLI did (tracebacks, log errors) when run.log says nothing.
