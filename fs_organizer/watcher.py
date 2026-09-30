@@ -52,13 +52,23 @@ class Organizer:
             if not self.config.ai.enabled or path.suffix.lower() not in self.config.ai.extensions:
                 logger.debug("No rule and AI not applicable for %s", path.name)
                 return
+            if self.activity is not None and hasattr(self.activity, "record_ai_call"):
+                self.activity.record_ai_call()
             category = classify_with_ai(path, self.config.ai)
             if category is None:
                 logger.info("AI classification failed for %s; leaving in place", path.name)
                 if self.activity is not None:
                     self.activity.add("error", path, "AI classification failed")
                 return
+        # Size must be read BEFORE the move: afterwards the source is gone.
+        try:
+            size_for_stats = path.stat().st_size
+        except OSError:
+            size_for_stats = None
         result = move_file(path, category, self.config)
+        if result.moved and size_for_stats is not None and self.activity is not None \
+                and hasattr(self.activity, "record_bytes"):
+            self.activity.record_bytes(size_for_stats)
         self._report(result, path)
         if result.transient:
             self._retry_locked(path)
@@ -160,20 +170,39 @@ class _EventHandler(FileSystemEventHandler):
 
 
 class Watcher:
-    """Owns the observer, worker pool, and debouncer; shuts them down cleanly."""
+    """Owns the observer, worker pool, and debouncer; shuts them down cleanly.
+
+    V2: supports pause/resume. While paused, debounce-fired paths are held
+    (re-scheduled into the debouncer) instead of dispatched — the events are
+    NOT dropped, just deferred, and pausing never disables the organizer's
+    own guards (a held path that was deleted while paused is simply dropped
+    by handle()'s is_file() check on resume). No extra threads: holding is
+    one dict re-insert inside the existing debouncer tick.
+    """
 
     def __init__(self, config: Config, num_workers: int = 2, activity=None) -> None:
         self.config = config
         self.organizer = Organizer(config, activity=activity)
         self.pool = WorkerPool(num_workers=num_workers)
+        self._paused = threading.Event()
+        self._pause_lock = threading.Lock()
+        self._held: set[Path] = set()
+
+        def _dispatch(path: Path) -> None:
+            if self._paused.is_set():
+                with self._pause_lock:
+                    self._held.add(path)
+                if activity is not None:
+                    activity.add("info", path, "held (paused)")
+                return
+            self.pool.submit_unique(self._dispatch_key(path), self.organizer.handle, path)
+
         self.debouncer = Debouncer(
             delay_seconds=max(config.file_stable_seconds, 0.05),
             # Keyed submit: duplicate events for the same path that land while
             # a handle() for it is queued or running coalesce into one task
             # (plus at most one follow-up pass), instead of queueing two moves.
-            callback=lambda p: self.pool.submit_unique(
-                self._dispatch_key(p), self.organizer.handle, p
-            ),
+            callback=_dispatch,
         )
         # Locked-file retries go back through the debouncer: the stability
         # window doubles as retry backoff, and submit_unique() keeps retries
@@ -189,6 +218,34 @@ class Watcher:
             logger.info("Watching %s", folder)
         self.observer.daemon = True
 
+    @property
+    def paused(self) -> bool:
+        return self._paused.is_set()
+
+    def pause(self) -> None:
+        """Stop acting on files; arriving events are held until resume()."""
+        self._paused.set()
+        if self.organizer.activity is not None and hasattr(self.organizer.activity, "set_paused"):
+            self.organizer.activity.set_paused(True)
+        logger.info("Paused: events are being held")
+
+    def resume(self) -> None:
+        """Dispatch everything held while paused (dedup via submit_unique)."""
+        with self._pause_lock:
+            held, self._held = self._held, set()
+        self._paused.clear()
+        if self.organizer.activity is not None and hasattr(self.organizer.activity, "set_paused"):
+            self.organizer.activity.set_paused(False)
+        for path in held:
+            self.pool.submit_unique(self._dispatch_key(path), self.organizer.handle, path)
+        logger.info("Resumed: %d held path(s) dispatched", len(held))
+
+    def drain_held(self, timeout: float = 5.0) -> None:
+        """Resume-and-dispatch helper for shutdown: releases held paths even
+        if still paused, so a paused daemon shuts down without losing them."""
+        if self._held:
+            self.resume()
+
     @staticmethod
     def _dispatch_key(path: Path) -> Path:
         """Dedupe key: the resolved path, so case/alias variants of one file
@@ -201,6 +258,41 @@ class Watcher:
     def start(self) -> None:
         self.observer.start()
 
+    def apply_config(self, new_config: Config) -> None:
+        """Hot-swap a new Config: re-schedule watches, keep threads and history.
+
+        Called from the dashboard's reload action. The observer is stopped
+        and restarted around the re-schedule (watchdog supports schedule/
+        unschedule_all on a live observer; a full stop/start is simpler and
+        bounded). Pending debounced work keeps running with the old config
+        object — its decisions were made under it, and the guards behave
+        identically. Raises on failure so the caller can revert; after a
+        failed rebuild the old watches stay scheduled (best effort).
+        """
+        old_config = self.config
+        old_watches = old_config.resolved_watch_folders()
+        self.config = new_config
+        self.observer.unschedule_all()
+        try:
+            for folder in new_config.resolved_watch_folders():
+                self.observer.schedule(self.handler, str(folder), recursive=new_config.recursive)
+                logger.info("Watching %s", folder)
+            self.handler._watch_roots = [Path(root).resolve() for root in new_config.resolved_watch_folders()]
+            self.organizer.config = new_config
+        except Exception:
+            # Full revert: the previous config object stays authoritative and
+            # its watches are re-scheduled best effort so the daemon keeps
+            # operating exactly as before the reload attempt.
+            self.config = old_config
+            self.organizer.config = old_config
+            self.observer.unschedule_all()
+            for folder in old_watches:
+                try:
+                    self.observer.schedule(self.handler, str(folder), recursive=old_config.recursive)
+                except Exception:  # noqa: BLE001
+                    logger.exception("Could not re-schedule %s during revert", folder)
+            raise
+
     def stop(self, join_timeout: float = 3.0, drain_timeout: float = 5.0) -> None:
         """Stop watching, let pending debounced files be handled, then shut down.
 
@@ -212,6 +304,9 @@ class Watcher:
         self.observer.join(timeout=join_timeout)
         if self.observer.is_alive():
             logger.warning("Observer did not stop within %.1fs", join_timeout)
+        # A paused watcher must not strand held paths: release them so the
+        # drain below processes them like any other pending work.
+        self.drain_held()
         # Workers must still be running while the debouncer fires pending
         # paths — drain first, THEN tear the threads down.
         self.debouncer.drain(timeout=drain_timeout)

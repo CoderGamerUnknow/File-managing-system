@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fs-organizer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Lightweight, rule-based file-system organizer with an AI fallback for unknown files."
 readme = "README.md"
 requires-python = ">=3.9"

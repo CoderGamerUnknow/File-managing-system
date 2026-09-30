@@ -20,6 +20,7 @@ import json
 import logging
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -74,6 +75,48 @@ class ActivityLog:
         # highest seq it has seen can ask "events since N" and never see a
         # duplicate or miss one after a wrap (the proven 700→500 bug class).
         self._next_seq = 0
+        # V2 runtime stats: cheap integer counters incremented alongside the
+        # event ring (no polling, no timers — low-resource-daemon skill).
+        # ``paused`` is mirrored here so /api/status reports one truth.
+        self.stats = {
+            "moved": 0,
+            "skipped": 0,
+            "refused": 0,
+            "dryrun": 0,
+            "errors": 0,
+            "bytes_moved": 0,
+            "ai_calls": 0,
+            "paused": False,
+        }
+        self._stats_started_at: float = time.time()
+
+    @staticmethod
+    def _stat_kind(kind: str) -> str | None:
+        """Map an event kind to its stats bucket (None = uncounted)."""
+        if kind in ("moved", "skipped", "refused", "dryrun", "error"):
+            return "errors" if kind == "error" else kind
+        return None
+
+    def record_bytes(self, size: int) -> None:
+        """Add ``size`` bytes to the bytes_moved counter (called by the
+        Organizer when a real move succeeded)."""
+        with self.lock:
+            self.stats["bytes_moved"] += int(size)
+
+    def record_ai_call(self) -> None:
+        with self.lock:
+            self.stats["ai_calls"] += 1
+
+    def set_paused(self, paused: bool) -> None:
+        with self.lock:
+            self.stats["paused"] = bool(paused)
+
+    def stats_snapshot(self) -> dict:
+        """Counters since start + uptime seconds (single locked read)."""
+        with self.lock:
+            out = dict(self.stats)
+            out["uptime_seconds"] = int(time.time() - self._stats_started_at)
+            return out
 
     def add(self, kind: str, path, detail: str = "", *, display_name: str | None = None) -> None:
         """Record one activity event.
@@ -102,6 +145,9 @@ class ActivityLog:
             self.events.append(entry)
             if len(self.events) > self.max_events:
                 del self.events[: len(self.events) - self.max_events]
+            bucket = self._stat_kind(kind)
+            if bucket:
+                self.stats[bucket] += 1
 
     def since(self, seq: int) -> list[dict]:
         """Events with ``seq > N``, oldest first (incremental polling).
@@ -134,12 +180,18 @@ class ActivityLog:
 _ONCE_ACTIONS = {"scan"}
 
 
+@dataclass
 class DashboardState:
     """Shared state handed to the HTTP handler."""
 
-    def __init__(self, config, activity: ActivityLog) -> None:
+    def __init__(self, config, activity: ActivityLog, watcher=None, config_path=None) -> None:
         self.config = config
         self.activity = activity
+        # V2: the running watcher (pause/resume) and the config file path
+        # (live reload). Both optional — a bare Dashboard still works.
+        self.watcher = watcher
+        self.config_path = Path(config_path) if config_path else None
+        self.on_reload = None  # set by the CLI: callable(new_config) -> None
         self.token = secrets.token_hex(16)
         self.oneshot_running = threading.Event()
         self.oneshot_result = {"status": "idle", "moved": 0, "error": None}
@@ -174,6 +226,58 @@ class DashboardState:
             self.activity.add("error", "(scan)", f"Manual scan failed: {exc}")
         finally:
             self.oneshot_running.clear()
+
+    # -- V2 runtime controls -------------------------------------------------
+
+    def pause(self, paused: bool) -> tuple[bool, str]:
+        """Pause or resume the watcher. Returns (ok, message)."""
+        if self.watcher is None:
+            return False, "No watcher is attached (one-shot mode?)"
+        if paused:
+            self.watcher.pause()
+            return True, "Paused — events are being held"
+        self.watcher.resume()
+        return True, "Resumed — held events dispatched"
+
+    def reload_config(self) -> tuple[bool, str, dict]:
+        """Re-read the config file and hot-swap it into the running daemon.
+
+        On any validation error the current config stays active. Returns
+        (ok, message, new_status_payload_or_empty).
+        """
+        if self.config_path is None:
+            return False, "No config file path is known (test/embedded setup)", {}
+        from .config import ConfigError, load_config
+
+        try:
+            new_config = load_config(self.config_path)
+        except ConfigError as exc:
+            self.activity.add("error", "(reload)", f"Config rejected: {exc}")
+            return False, f"Config rejected — previous config stays active: {exc}", {}
+        old = self.config
+        self.config = new_config
+        applied = True
+        detail = "Config reloaded"
+        # Swap the watcher's config + watch set. The observer rebuilds its
+        # watches; debounced/pending work keeps the old config object (its
+        # decisions were made under it — safe: guards only get stricter).
+        if self.watcher is not None:
+            try:
+                self.watcher.apply_config(new_config)
+            except Exception as exc:  # noqa: BLE001 - never kill the daemon
+                logger.exception("apply_config failed; reverting")
+                self.config = old
+                applied = False
+                detail = f"Reload failed while re-watching: {exc} — previous config stays active"
+                self.activity.add("error", "(reload)", detail)
+        if self.on_reload is not None and applied:
+            try:
+                self.on_reload(new_config)
+            except Exception:  # noqa: BLE001
+                logger.exception("on_reload callback failed")
+        if applied:
+            self.activity.add("info", "(reload)", detail)
+        return applied, detail, status_payload(self.config)
 
 
 def make_handler(state: DashboardState):
@@ -224,6 +328,8 @@ def make_handler(state: DashboardState):
                 payload = status_payload(state.config)
                 payload["oneshot"] = dict(state.oneshot_result)
                 payload["plan"] = plan_summary(state.config)
+                payload["stats"] = state.activity.stats_snapshot()
+                payload["paused"] = state.watcher.paused if state.watcher else False
                 self._send_json(payload)
             elif path == "/api/rules":
                 # Read-only config summary: every rule, the effective
@@ -256,7 +362,7 @@ def make_handler(state: DashboardState):
                 self._send_json({"error": "forbidden"}, status=403)
                 return
             path = self.path.split("?", 1)[0]
-            if path != "/api/once":
+            if path not in ("/api/once", "/api/pause", "/api/reload"):
                 self._send_json({"error": "not found"}, status=404)
                 return
             if not self._authed_post():
@@ -273,10 +379,34 @@ def make_handler(state: DashboardState):
             except (ValueError, UnicodeDecodeError):
                 self._send_json({"error": "invalid JSON body"}, status=400)
                 return
-            action = data.get("action", "") if isinstance(data, dict) else ""
-            ok, msg = state.run_once_async(action)
+            if not isinstance(data, dict):
+                self._send_json({"error": "JSON body must be an object"}, status=400)
+                return
+            action = data.get("action", "")
+            if path == "/api/once":
+                ok, msg = state.run_once_async(action)
+                self._send_json(
+                    {"ok": ok, "message": msg, **state.oneshot_result},
+                    status=200 if ok else 409,
+                )
+                return
+            if path == "/api/pause":
+                if action not in ("pause", "resume"):
+                    self._send_json(
+                        {"ok": False, "message": "action must be 'pause' or 'resume'"},
+                        status=400,
+                    )
+                    return
+                ok, msg = state.pause(action == "pause")
+                self._send_json(
+                    {"ok": ok, "message": msg, "paused": state.watcher.paused if state.watcher else False},
+                    status=200 if ok else 409,
+                )
+                return
+            # /api/reload
+            ok, msg, payload = state.reload_config()
             self._send_json(
-                {"ok": ok, "message": msg, **state.oneshot_result},
+                {"ok": ok, "message": msg, "status": payload},
                 status=200 if ok else 409,
             )
 
@@ -287,14 +417,21 @@ class Dashboard:
     """Owns the HTTP server thread; start()/stop() are idempotent-ish."""
 
     def __init__(self, config, activity: ActivityLog | None = None,
-                 port: int = 8765, open_browser: bool = True) -> None:
-        self.config = config
+                 port: int = 8765, open_browser: bool = True,
+                 watcher=None, config_path=None) -> None:
         self.activity = activity if activity is not None else ActivityLog()
         self.port = port
         self.open_browser = open_browser
-        self.state = DashboardState(config, self.activity)
+        self.state = DashboardState(config, self.activity, watcher=watcher, config_path=config_path)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+
+    @property
+    def config(self):
+        """The CURRENT config — always the state's (a live reload swaps the
+        state's config; a separate Dashboard copy would go stale and become
+        a second source of truth)."""
+        return self.state.config
 
     @property
     def url(self) -> str:

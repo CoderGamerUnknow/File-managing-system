@@ -99,3 +99,12 @@ Entry points:
     (`/api/events?since=N`) must never miss or duplicate events across
     ring-buffer wraps; clients detect ring-fall-off or a counter reset via
     `oldest`/`latest` and re-sync from a full snapshot.
+13. V2 runtime controls: the single-instance guard (runtime.py) means one
+    daemon per resolved config path — a second start exits 3 unless
+    `--force`. Stale locks (dead pid) are replaced, never require manual
+    cleanup. Pause HOLDS events (bounded by the debouncer), never drops
+    them; stop() releases held paths before draining. Live reload swaps
+    the config ONLY through DashboardState.config — Dashboard.config is a
+    read-only property over it (no second source of truth); a rejected
+    reload keeps the old config active and the watcher's watches are fully
+    reverted on a failed apply.

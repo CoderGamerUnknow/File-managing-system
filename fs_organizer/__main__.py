@@ -267,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         "--no-browser", action="store_true",
         help="With --ui: do not open the browser automatically",
     )
+    common_flags.add_argument(
+        "--force", action="store_true",
+        help="Start even if another daemon instance holds this config's lock",
+    )
     # Commands reuse the ``config`` positional from the main parser. The
     # positional must be declared before the subparsers so argparse can match
     # them (a subparser cannot consume a positional from the parent parser).
@@ -320,6 +324,18 @@ def main(argv: list[str] | None = None) -> int:
         _one_shot(config)
         return 0
 
+    # V2 single-instance guard: one daemon per config file (resolved), so two
+    # organizers can never race the same folders. Different configs may run
+    # side by side. --force overrides deliberately.
+    from .runtime import InstanceLock
+
+    lock_path = Path(os.path.expanduser(args.config)).resolve().with_suffix(".lock")
+    instance_lock = InstanceLock(lock_path)
+    ok, lock_msg = instance_lock.acquire(force=getattr(args, "force", False))
+    if not ok:
+        _print(f"Not starting: {lock_msg}")
+        return 3
+
     # Optional live dashboard (see ui.py); shares the activity feed with the
     # watcher so the UI reflects what the organizer actually did.
     activity = None
@@ -328,8 +344,12 @@ def main(argv: list[str] | None = None) -> int:
         from .ui import ActivityLog, Dashboard
 
         activity = ActivityLog()
+        # The dashboard gets the watcher + config path so pause/reload work.
+        # The watcher must exist first; construct it now, start after wiring.
+        watcher = Watcher(config, activity=activity)
         dashboard = Dashboard(
-            config, activity, port=args.port, open_browser=not args.no_browser
+            config, activity, port=args.port, open_browser=not args.no_browser,
+            watcher=watcher, config_path=args.config,
         )
         try:
             dashboard.start()
@@ -338,8 +358,9 @@ def main(argv: list[str] | None = None) -> int:
             _print("Continuing without the UI (try --port 0 to pick a free port).")
             dashboard = None
             activity = None
+    else:
+        watcher = Watcher(config, activity=None)
 
-    watcher = Watcher(config, activity=activity)
     watcher.start()
     _print(f"fs-organizer running. Watching {len(config.resolved_watch_folders())} folder(s). Ctrl+C to stop.")
     stop = threading.Event()
@@ -351,6 +372,7 @@ def main(argv: list[str] | None = None) -> int:
         watcher.stop()
         if dashboard is not None:
             dashboard.stop()
+        instance_lock.release()
     return 0
 
 

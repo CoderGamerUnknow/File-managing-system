@@ -15,6 +15,12 @@
   header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
            background: var(--panel); border-bottom: 1px solid #26304a; }
   header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .statsbar { display: flex; gap: 18px; padding: 8px 20px; background: var(--panel2);
+              border-bottom: 1px solid #26304a; font-size: 12.5px; color: var(--muted);
+              flex-wrap: wrap; align-items: center; }
+  .statsbar span { white-space: nowrap; }
+  .statsbar #stat-moved { color: var(--ok); font-weight: 600; }
+  .statsbar #paused-badge { background: #3a2f10; color: var(--warn); }
   .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
   .badge.live { background: #10331f; color: var(--ok); }
   .badge.dry { background: #3a2f10; color: var(--warn); }
@@ -69,8 +75,19 @@
   <span id="mode-badge" class="badge live">LIVE</span>
   <span class="spacer"></span>
   <span id="scan-status" class="muted"></span>
+  <button id="pause-btn" class="ghost">Pause</button>
+  <button id="reload-btn" class="ghost" title="Re-read the config file without restarting">Reload config</button>
   <button id="scan-btn">Organize now</button>
 </header>
+<div id="stats-bar" class="statsbar">
+  <span id="stat-moved">0 moved</span>
+  <span id="stat-skipped">0 skipped</span>
+  <span id="stat-refused">0 refused</span>
+  <span id="stat-bytes">0 B moved</span>
+  <span id="stat-ai">0 AI calls</span>
+  <span id="stat-uptime">0s uptime</span>
+  <span id="paused-badge" class="badge" style="display:none">PAUSED</span>
+</div>
 <main>
   <div class="card">
     <h2>Status</h2>
@@ -292,6 +309,21 @@ async function api(path, opts) {
   return res.json();
 }
 
+function renderStats(stats, paused) {
+  if (!stats) return;
+  $("#stat-moved").textContent = `${stats.moved ?? 0} moved`;
+  $("#stat-skipped").textContent = `${stats.skipped ?? 0} skipped`;
+  $("#stat-refused").textContent = `${stats.refused ?? 0} refused`;
+  $("#stat-bytes").textContent = `${fmtSize(stats.bytes_moved ?? 0)} moved`;
+  $("#stat-ai").textContent = `${stats.ai_calls ?? 0} AI calls`;
+  const up = stats.uptime_seconds ?? 0;
+  $("#stat-uptime").textContent = up >= 90 ? `${Math.floor(up / 60)}m uptime` : `${up}s uptime`;
+  const badge = $("#paused-badge");
+  badge.style.display = paused ? "" : "none";
+  const btn = $("#pause-btn");
+  btn.textContent = paused ? "Resume" : "Pause";
+}
+
 function renderStatus(s) {
   const badge = $("#mode-badge");
   if (s.dry_run) { badge.textContent = "DRY-RUN"; badge.className = "badge dry"; }
@@ -320,12 +352,21 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => map[c]);
 }
 
+async function post(path, body) {
+  return api(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json", "X-Auth-Token": TOKEN},
+    body: JSON.stringify(body || {}),
+  });
+}
+
 async function refresh() {
   if (REFRESH_BUSY) return;
   REFRESH_BUSY = true;
   try {
     const [status] = await Promise.all([api("/api/status"), fetchEvents()]);
     renderStatus(status);
+    renderStats(status.stats, status.paused);
     const os = status.oneshot || {};
     const btn = $("#scan-btn");
     btn.disabled = os.status === "running";
@@ -351,12 +392,33 @@ whenReady(() => {
     $("#scan-btn").disabled = true;
     $("#scan-status").textContent = "Starting scan\u2026";
     try {
-      await api("/api/once", {
-        method: "POST",
-        headers: {"Content-Type": "application/json", "X-Auth-Token": TOKEN},
-        body: JSON.stringify({action: "scan"}),
-      });
+      await post("/api/once", {action: "scan"});
     } catch (e) { $("#scan-status").textContent = "Scan failed to start"; }
+    refresh();
+  });
+
+  $("#pause-btn").addEventListener("click", async () => {
+    const pausing = $("#pause-btn").textContent.trim() === "Pause";
+    try {
+      const res = await post("/api/pause", {action: pausing ? "pause" : "resume"});
+      $("#scan-status").textContent = res.message || (pausing ? "Paused" : "Resumed");
+    } catch (e) {
+      $("#scan-status").textContent = pausing ? "Pause failed" : "Resume failed";
+    }
+    refresh();
+  });
+
+  $("#reload-btn").addEventListener("click", async () => {
+    $("#reload-btn").disabled = true;
+    $("#scan-status").textContent = "Reloading config\u2026";
+    try {
+      const res = await post("/api/reload", {});
+      $("#scan-status").textContent = res.message || (res.ok ? "Config reloaded" : "Reload failed");
+    } catch (e) {
+      $("#scan-status").textContent = "Reload failed";
+    }
+    $("#reload-btn").disabled = false;
+    loadFiles();
     refresh();
   });
 
