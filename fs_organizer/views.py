@@ -269,12 +269,15 @@ def rules_payload(config) -> dict:
     from .mover import plan_actions
 
     cover = config.coverage_report()
-    expanded = config.expanded_watch_folders()
+    # The folders the organizer actually acts on (existing, resolved) — not
+    # expanded_watch_folders(), which can list configured-but-missing folders
+    # and would advertise work the watcher will never do (flaw #42).
+    resolved = config.resolved_watch_folders()
     actions = plan_actions(config)
 
     return {
-        "watch_folders": [str(p) for p in expanded],
-        "expanded_watch_folders": [str(p) for p in expanded],
+        "watch_folders": [str(p) for p in resolved],
+        "expanded_watch_folders": [str(p) for p in config.expanded_watch_folders()],
         "categories": cover["categories"],
         "ignored": config.effective_ignore_patterns(),
         "dry_run": config.dry_run,

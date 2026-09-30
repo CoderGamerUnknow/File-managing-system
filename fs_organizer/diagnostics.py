@@ -116,12 +116,13 @@ def watch_diag(config, watch_files: list[str]) -> dict[str, object]:
             "no_rule_not_ai": counts["would_skip_unknown"],
             "would_organize": counts["would_organize"],
             "would_classify_ai": counts["would_classify_ai"],
+            # Same source as the counts above (plan_actions' bounded scan),
+            # so matched_rules honors config.recursive and can never disagree
+            # with would_organize in the same payload (flaw #41).
             "matched_rules": sorted(
-                config.target_rules[p.suffix.lower()]
-                for p in _list_children(folder)
-                if p.is_file()
-                and not is_ignored(p, config.effective_ignore_patterns())
-                and p.suffix.lower() in config.target_rules
+                config.target_rules[Path(r["path"]).suffix.lower()]
+                for r in actions["would_organize"]
+                if Path(r["path"]).suffix.lower() in config.target_rules
             ),
         }
         out["files"][str(folder)] = entries

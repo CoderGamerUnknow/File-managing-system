@@ -1984,3 +1984,96 @@ class TestFlaw40JournalCategory:
         rows = [r for rows_ in data["groups"].values() for r in rows_]
         dashboard_category = next(r["category"] for r in rows if r["name"] == "a.txt")
         assert dashboard_category == entry["category"] == "Documents"
+
+
+# ---------------------------------------------------------------- flaw #41
+class TestFlaw41MatchedRulesScope:
+    """watch_diag's matched_rules must come from the same bounded scan as
+    its sibling counts (plan_actions), so it honors config.recursive.
+    Derived from _list_children (top level only), it contradicted the very
+    payload it sat in: would_organize: 5 alongside matches listing 1."""
+
+    def _cfg(self, tmp_path, recursive):
+        nested = tmp_path / "watch" / "sub"
+        nested.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "watch" / "top.txt").write_text("x", encoding="utf-8")
+        (nested / "deep.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "watch" / "skip.tmp").write_text("x", encoding="utf-8")
+        cfg = make_config(tmp_path)
+        cfg.recursive = recursive
+        return cfg
+
+    def test_recursive_matched_rules_include_nested(self, tmp_path):
+        from fs_organizer.diagnostics import watch_diag as _watch_diag
+
+        data = _watch_diag(self._cfg(tmp_path, recursive=True), [])
+        info = data["files"][str(tmp_path / "watch")]
+        assert info["matched_rules"] == ["Documents", "Documents"]
+        # Same-truth sanity: every matched rule corresponds to a would-move.
+        assert info["would_organize"] == 2
+
+    def test_top_level_matched_rules_unchanged(self, tmp_path):
+        """recursive: false keeps the historical top-level-only result."""
+        from fs_organizer.diagnostics import watch_diag as _watch_diag
+
+        data = _watch_diag(self._cfg(tmp_path, recursive=False), [])
+        info = data["files"][str(tmp_path / "watch")]
+        assert info["matched_rules"] == ["Documents"]
+        assert info["would_organize"] == 1
+
+    def test_ignored_files_never_counted_as_matched(self, tmp_path):
+        """A rule-matching file swallowed by the ignore list is not a match.
+        (The old _list_children derivation applied the same filter, but the
+        scan-derived list must keep that property too.)"""
+        from fs_organizer.diagnostics import watch_diag as _watch_diag
+
+        cfg = self._cfg(tmp_path, recursive=False)
+        cfg.ignore_patterns = ["*.txt"]  # swallows every rule match
+        data = _watch_diag(cfg, [])
+        info = data["files"][str(tmp_path / "watch")]
+        assert info["matched_rules"] == []
+        assert info["would_organize"] == 0
+
+
+# ---------------------------------------------------------------- flaw #42
+class TestFlaw42RulesPayloadFolders:
+    """rules_payload's watch_folders must be the resolved (existing) set —
+    the folders the organizer actually acts on. Reporting the raw expanded
+    list advertised configured-but-missing folders the watcher never
+    watches (the flaw #25 bug class, in the dashboard's Rules card).
+    status_payload already used resolved_watch_folders(); rules_payload is
+    now consistent with it."""
+
+    def test_missing_watch_folder_not_advertised(self, tmp_path):
+        from fs_organizer.views import rules_payload
+
+        real = tmp_path / "watch"
+        real.mkdir(exist_ok=True)
+        ghost = tmp_path / "ghost"
+        cfg = make_config(tmp_path)
+        cfg.watch_folders = [str(real), str(ghost)]
+
+        data = rules_payload(cfg)
+        assert data["watch_folders"] == [str(real)]
+        # The raw list stays available under its own key, honestly labeled.
+        assert str(ghost) in data["expanded_watch_folders"]
+
+    def test_matches_status_payload_folders(self, tmp_path):
+        """Both dashboard payloads must agree on the watched set."""
+        from fs_organizer.ui import status_payload
+        from fs_organizer.views import rules_payload
+
+        real = tmp_path / "watch"
+        real.mkdir(exist_ok=True)
+        cfg = make_config(tmp_path)
+        cfg.watch_folders = [str(real), str(tmp_path / "ghost")]
+
+        assert rules_payload(cfg)["watch_folders"] == status_payload(cfg)["watch_folders"]
+
+    def test_all_folders_exist_passthrough(self, tmp_path):
+        from fs_organizer.views import rules_payload
+
+        cfg = make_config(tmp_path)
+        data = rules_payload(cfg)
+        assert data["watch_folders"] == [str(tmp_path / "watch")]
+        assert data["expanded_watch_folders"] == data["watch_folders"]

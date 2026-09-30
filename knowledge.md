@@ -72,7 +72,7 @@ Entry points:
    `ConfigError` (exit code 2 from the CLI).
 5. `classify_with_ai` never raises; unknown/disallowed AI answers leave the file in place.
 6. Tests: `python -m pytest` must stay green; timing-sensitive regressions
-   live in `tests/test_flaw_regressions.py` (flaws #1–#40, one class each);
+   live in `tests/test_flaw_regressions.py` (flaws #1–#42, one class each);
    the shared `make_config` builder lives in `tests/helpers.py`.
 7. The dashboard must never bind beyond loopback, and its HTML must escape
    user-influenced strings (file names) before rendering — see `ui.py`.
@@ -81,8 +81,10 @@ Entry points:
    every diagnostic. No consumer may use the raw user list.
 9. Every filesystem scan (`_scan_files`, `--once`, the watcher) covers the
    same scope: the top level of each watch folder, plus all subfolders when
-   `recursive: true` (explicit opt-in). Plans and diagnostics must never
-   advertise a scope the watcher does not act on.
+   `recursive: true` (explicit opt-in). Plans, diagnostics, and dashboard
+   payloads must never advertise a scope the watcher does not act on —
+   including per-file details like watch-diag's `matched_rules` (#41) and
+   the Rules card's watched-folder list (#42).
 10. Config dumps are redacted: `to_dict()` never emits `ai.api_key` in
     cleartext (`check --json`, `watch-diag --json`).
 11. The move journal is owned solely by `journal.py` (append/read, torn-line
