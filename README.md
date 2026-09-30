@@ -1,5 +1,7 @@
 # fs-organizer
 
+[![CI](https://github.com/CoderGamerUnknow/File-managing-system/actions/workflows/ci.yml/badge.svg)](https://github.com/CoderGamerUnknow/File-managing-system/actions/workflows/ci.yml)
+
 A lightweight, rule-based file organizer that watches your folders and sorts
 new files into category subfolders — with an optional AI fallback for file
 types your rules don't cover.
