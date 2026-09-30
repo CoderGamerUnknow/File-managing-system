@@ -1,0 +1,51 @@
+{
+  "watch_folders": ["~/Downloads", "~/Desktop"],
+  "target_rules": {
+    ".jpg": "Images",
+    ".jpeg": "Images",
+    ".png": "Images",
+    ".gif": "Images",
+    ".webp": "Images",
+    ".svg": "Images",
+    ".pdf": "Documents",
+    ".docx": "Documents",
+    ".xlsx": "Documents",
+    ".pptx": "Documents",
+    ".txt": "Documents",
+    ".md": "Documents",
+    ".mp3": "Music",
+    ".wav": "Music",
+    ".flac": "Music",
+    ".mp4": "Videos",
+    ".mkv": "Videos",
+    ".mov": "Videos",
+    ".zip": "Archives",
+    ".tar": "Archives",
+    ".gz": "Archives",
+    ".7z": "Archives",
+    ".exe": "Installers",
+    ".msi": "Installers",
+    ".iso": "Disk Images"
+  },
+  "ignore_patterns": [".*", "*.tmp", "*.part", "*.crdownload", "*~", "desktop.ini", "Thumbs.db"],
+  "target_root": null,
+  "use_date_subfolders": false,
+  "dry_run": false,
+  "file_stable_seconds": 1.0,
+  "recursive": false,
+  "journal": {
+    "enabled": false,
+    "path": null
+  },
+  "ai": {
+    "enabled": true,
+    "provider": "ollama",
+    "api_key": null,
+    "model": "llama3.2",
+    "base_url": null,
+    "timeout_seconds": 15,
+    "max_bytes_to_read": 65536,
+    "allowed_subfolders": ["Documents", "Images", "Music", "Videos", "Archives", "Spreadsheets", "Presentations", "Projects", "Notes"],
+    "extensions": [".txt", ".md", ".log", ".csv", ".json", ".xml", ".yaml", ".yml", ".html", ".rtf", ".doc", ".dat"]
+  }
+}

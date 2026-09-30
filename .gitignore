@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local runtime artifacts
+tmp/
+probe_out.log
+probe_ready.json
+*.part
+
+# Local config with potentially personal paths / secrets
+config.json
+
+# Freebuff session-local files (skills stay committed)
+.freebuff/project-id
+.freebuff/state/

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fs-organizer dashboard</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1d2740; --text: #e8ecf4;
+    --muted: #8b96ad; --accent: #4da3ff; --ok: #3fbf7f; --warn: #e8b74a; --err: #e86a6a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+           background: var(--panel); border-bottom: 1px solid #26304a; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+  .badge.live { background: #10331f; color: var(--ok); }
+  .badge.dry { background: #3a2f10; color: var(--warn); }
+  .spacer { flex: 1; }
+  button { background: var(--accent); color: #06101f; border: 0; padding: 8px 14px;
+           border-radius: 6px; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: var(--panel2); color: var(--text); }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto;
+         display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid #26304a; border-radius: 10px;
+          padding: 14px 16px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase;
+             letter-spacing: .06em; color: var(--muted); }
+  .card.wide { grid-column: 1 / -1; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+  .kv .k { color: var(--muted); }
+  .folders li { margin: 2px 0; word-break: break-all; }
+  ul { margin: 0; padding-left: 18px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #223050; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.ext { color: var(--accent); font-family: ui-monospace, Consolas, monospace; }
+  #events { max-height: 340px; overflow-y: auto; }
+  .date-group { margin-bottom: 14px; }
+  .date-head { font-weight: 700; padding: 6px 8px; background: var(--panel2);
+               border-radius: 6px; margin-bottom: 4px; }
+  #files-list table { margin: 0 0 4px 8px; width: calc(100% - 8px); }
+  #files-list td { padding: 3px 8px; }
+  #files-list td.size { color: var(--muted); white-space: nowrap; }
+  #files-list th:last-child, #files-list td:last-child { text-align: right; }
+  select { background: var(--panel2); color: var(--text); border: 1px solid #26304a;
+           border-radius: 6px; padding: 5px 8px; }
+  .ev { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid #1d2740;
+        font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
+  .ev .t { color: var(--muted); flex: 0 0 62px; }
+  .ev .kind { flex: 0 0 78px; font-weight: 700; }
+  .kind.moved { color: var(--ok); } .kind.skipped { color: var(--muted); }
+  .kind.dryrun { color: var(--warn); } .kind.error { color: var(--err); }
+  .kind.refused { color: var(--err); font-weight: 700; }
+  .kind.info { color: var(--accent); }
+  .ev .n { flex: 1; word-break: break-all; }
+  .ev .d { color: var(--muted); word-break: break-all; }
+  .muted { color: var(--muted); }
+  #scan-status { font-size: 12.5px; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>fs-organizer</h1>
+  <span id="mode-badge" class="badge live">LIVE</span>
+  <span class="spacer"></span>
+  <span id="scan-status" class="muted"></span>
+  <button id="scan-btn">Organize now</button>
+</header>
+<main>
+  <div class="card">
+    <h2>Status</h2>
+    <div class="kv" id="status"></div>
+  </div>
+  <div class="card">
+    <h2>Watched folders</h2>
+    <ul id="folders" class="folders"></ul>
+  </div>
+  <div class="card wide">
+    <h2>Rules</h2>
+    <table id="rules">
+      <thead><tr><th>Category</th><th>Extensions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="card wide">
+    <h2>Recent activity</h2>
+    <div id="events"><div class="muted">Waiting for activity&hellip;</div></div>
+  </div>
+  <div class="card wide">
+    <h2>Files by date <span class="muted" id="files-meta"></span></h2>
+    <div id="files-loading" class="muted">Loading files&hellip;</div>
+    <div id="files-error" style="color: var(--err); display:none"></div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap">
+      <button id="month-prev" class="ghost" title="Previous month">&lsaquo;</button>
+      <select id="month-select" style="min-width:180px"></select>
+      <button id="month-next" class="ghost" title="Next month">&rsaquo;</button>
+      <button id="month-all" class="ghost">All months</button>
+      <span style="flex:1"></span>
+      <label for="sort" class="muted">Sort:</label>
+      <select id="sort">
+        <option value="created-desc">Created &darr; (newest first)</option>
+        <option value="created-asc">Created &uarr; (oldest first)</option>
+        <option value="name-asc">Name A&rarr;Z</option>
+        <option value="name-desc">Name Z&rarr;A</option>
+      </select>
+    </div>
+    <div id="files-list"></div>
+  </div>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+// Callers pass selector strings ("#scan-btn"), so this must be querySelector —
+// getElementById would return null for every $() call and silently kill all
+// the wiring below (observed live: header listeners threw, refresh never ran).
+const $ = (sel) => document.querySelector(sel);
+let SORT = "created-desc";
+let MONTH = "all";   // "all" or "YYYY-MM"
+let MONTHS = [];
+let SUMMARY = {};
+let FILE_GROUPS = [];
+let FILE_TOTAL = 0;
+let FILE_TRUNCATED = false;
+let LAST_SEQ = null;   // highest event seq rendered; null = fetch a full snapshot
+
+// Incremental event sync: every poll asks the server only for events newer
+// than the last sequence number we rendered ("events since N"). Sequence
+// numbers are gap-free and monotonic, so nothing is missed or duplicated
+// across ring-buffer wraps. If we have fallen off the ring (polled too late)
+// or the counter restarted below our watermark (server restart), fall back
+// to a full re-sync and continue incrementally from there.
+function eventRow(e) {
+  const kind = e.kind === "would_move" ? "dryrun" : e.kind;
+  return `<div class="ev">
+    <span class="t">${escapeHtml(e.time)}</span>
+    <span class="kind ${escapeHtml(kind)}">${escapeHtml(kind)}</span>
+    <span class="n">${escapeHtml(e.name)}</span>
+    <span class="d">${escapeHtml(e.detail)}</span>
+  </div>`;
+}
+
+function renderEventList(events, replace) {
+  if (!events.length) return;
+  const html = events.map(eventRow).join("");
+  if (replace) {
+    $("#events").innerHTML = html;  // full snapshot (newest first) replaces the view
+  } else {
+    $("#events").insertAdjacentHTML("afterbegin", html);  // incremental: prepend
+  }
+}
+
+function adoptSeq(events) {
+  if (!events.length) return;
+  const seqOf = (e) => (typeof e.seq === "number" ? e.seq : -1);
+  const highest = Math.max(...events.map(seqOf));
+  if (Number.isFinite(highest) && highest >= 0
+      && (LAST_SEQ === null || highest > LAST_SEQ)) LAST_SEQ = highest;
+}
+
+async function fetchEvents() {
+  const fullSync = LAST_SEQ === null;
+  const path = fullSync ? "/api/events" : "/api/events?since=" + LAST_SEQ;
+  const data = await api(path);
+  const events = data.events || [];
+  const behind = !fullSync && data.latest != null
+    && (LAST_SEQ > data.latest || (data.oldest != null && data.oldest > LAST_SEQ + 1));
+  if (behind) {
+    const fresh = (await api("/api/events")).events || [];
+    LAST_SEQ = null;
+    adoptSeq(fresh);
+    renderEventList(fresh, true);
+    return;
+  }
+  renderEventList(events, fullSync);
+  adoptSeq(events);
+}
+
+let REFRESH_BUSY = false;  // overlapping polls would double-render one batch
+
+function fmtSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "—";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let v = bytes, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(1)) + " " + units[i];
+}
+
+function renderMonthSelect() {
+  const sel = $("#month-select");
+  sel.innerHTML = MONTHS.map(m =>
+    `<option value="${m.key}">${escapeHtml(m.label)} (${m.count})</option>`).join("")
+    + `<option value="all">All months (${FILE_TOTAL})</option>`;
+  // Keep the user's month across auto-refreshes; only reset if it truly no
+  // longer exists (e.g. the folder was cleared). MONTH === "all" is always valid.
+  const valid = MONTH === "all" || MONTHS.some(m => m.key === MONTH);
+  if (!valid) MONTH = MONTHS.length ? MONTHS[0].key : "all";
+  sel.value = MONTH;
+}
+
+function renderFiles() {
+  const list = $("#files-list");
+  const meta = $("#files-meta");
+  const shown = MONTH === "all"
+    ? FILE_GROUPS : FILE_GROUPS.filter(([d]) => d.startsWith(MONTH + "-"));
+  if (!shown.length) {
+    list.innerHTML = `<div class="muted">${FILE_GROUPS.length
+      ? "No files in this month."
+      : "No organized files yet — the target root is empty."}</div>`;
+    meta.textContent = "";
+    return;
+  }
+  const parts = shown.map(([date, files]) => {
+    const s = SUMMARY[date] || { count: files.length, bytes: 0, categories: {} };
+    const cats = Object.entries(s.categories).map(([c, n]) =>
+      `${escapeHtml(c)}: ${n}`).join(" · ");
+    const sorted = files.slice().sort((a, b) => {
+      if (SORT === "name-asc") return a.name.localeCompare(b.name);
+      if (SORT === "name-desc") return b.name.localeCompare(a.name);
+      if (SORT === "created-asc") return a.created - b.created;
+      return b.created - a.created;
+    });
+    const rows = sorted.map(f => `<tr>
+      <td class="ext">${escapeHtml(f.category || "—")}</td>
+      <td>${escapeHtml(f.name)}</td>
+      <td class="size">${fmtSize(f.size)}</td>
+    </tr>`).join("");
+    return `<div class="date-group">
+      <div class="date-head">${date}
+        <span class="muted">· ${s.count} file(s) · ${fmtSize(s.bytes)}${cats ? " · " + cats : ""}</span>
+      </div>
+      <table><tbody>${rows}</tbody></table>
+    </div>`;
+  });
+  list.innerHTML = parts.join("");
+  meta.textContent = MONTH === "all"
+    ? `· ${FILE_TOTAL} file(s)`
+    : `· ${shown.reduce((n, [, fs]) => n + fs.length, 0)} of ${FILE_TOTAL} file(s)`;
+}
+
+async function loadFiles() {
+  const loading = $("#files-loading");
+  const errBox = $("#files-error");
+  try {
+    const data = await api("/api/files");
+    FILE_GROUPS = Object.entries(data.groups || {});
+    FILE_TOTAL = data.total || 0;
+    FILE_TRUNCATED = !!data.truncated;
+    SUMMARY = data.summary || {};
+    MONTHS = data.months || [];
+    renderMonthSelect();
+    loading.style.display = "none";
+    errBox.style.display = "none";
+    renderFiles();
+  } catch (e) {
+    loading.style.display = "none";
+    errBox.style.display = "block";
+    errBox.textContent = "Could not load files: " + e.message;
+  }
+}
+
+function stepMonth(dir) {
+  // MONTHS is newest-first, so "previous month" (dir=-1) moves DOWN the list.
+  const idx = MONTHS.findIndex(m => m.key === MONTH);
+  if (idx === -1) {
+    // From "All months", either button enters the newest month.
+    MONTH = MONTHS.length ? MONTHS[0].key : "all";
+  } else {
+    const candidate = MONTHS[idx - dir];  // -1 → idx+1 (older), +1 → idx-1 (newer)
+    if (candidate) MONTH = candidate.key;
+    // else: already at the end in that direction — stay put.
+  }
+  renderMonthSelect();
+  renderFiles();
+}
+function whenReady(fn) {
+  // The script sits at the end of <body>, but an embedded/fast browser can
+  // still run it before the header elements are parsed — and then every
+  // getElementById below returns null (observed: addEventListener on null
+  // at first load, page only worked after a retry). Defer ALL DOM wiring
+  // and the polling bootstrap until the document is parsed.
+  if (document.readyState !== "loading") fn();
+  else document.addEventListener("DOMContentLoaded", fn);
+}
+
+async function api(path, opts) {
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error(path + " -> " + res.status);
+  return res.json();
+}
+
+function renderStatus(s) {
+  const badge = $("#mode-badge");
+  if (s.dry_run) { badge.textContent = "DRY-RUN"; badge.className = "badge dry"; }
+  else { badge.textContent = "LIVE"; badge.className = "badge live"; }
+  const ai = s.ai.enabled
+    ? s.ai.provider + " (" + s.ai.model + ")" : "off";
+  $("#status").innerHTML = [
+    ["Target root", s.target_root],
+    ["Stability window", s.file_stable_seconds + " s"],
+    ["Date subfolders", s.use_date_subfolders ? "on" : "off"],
+    ["Recursive scope", s.recursive ? "on (subfolders watched)" : "off (top level only)"],
+    ["AI fallback", ai],
+    ["Ignore patterns", s.ignore_patterns.length + " patterns"],
+  ].map(([k, v]) => `<div class="k">${k}</div><div>${escapeHtml(String(v))}</div>`).join("");
+  $("#folders").innerHTML = s.watch_folders.map(f => `<li>${escapeHtml(f)}</li>`).join("");
+  const tbody = $("#rules").querySelector("tbody");
+  tbody.innerHTML = Object.entries(s.categories).map(([cat, exts]) =>
+    `<tr><td>${escapeHtml(cat)}</td><td class="ext">${exts.map(escapeHtml).join(" ")}</td></tr>`
+  ).join("");
+}
+
+function escapeHtml(s) {
+  // Coerce first: values like file sizes are numbers, and an absent detail
+  // is undefined — String() keeps this from throwing on non-strings.
+  const map = {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"};
+  return String(s).replace(/[&<>"']/g, (c) => map[c]);
+}
+
+async function refresh() {
+  if (REFRESH_BUSY) return;
+  REFRESH_BUSY = true;
+  try {
+    const [status] = await Promise.all([api("/api/status"), fetchEvents()]);
+    renderStatus(status);
+    const os = status.oneshot || {};
+    const btn = $("#scan-btn");
+    btn.disabled = os.status === "running";
+    $("#scan-status").textContent =
+      os.status === "running" ? "Scan running\u2026"
+      : os.status === "done" ? `Last scan: ${os.moved} file(s) organized`
+      : os.status === "error" ? "Last scan failed: " + (os.error || "?") : "";
+  } catch (e) { /* server restarting; retry next tick */ }
+  finally { REFRESH_BUSY = false; }
+}
+
+whenReady(() => {
+  $("#month-prev").addEventListener("click", () => stepMonth(-1));
+  $("#month-next").addEventListener("click", () => stepMonth(1));
+  $("#month-all").addEventListener("click", () => {
+    MONTH = "all"; renderMonthSelect(); renderFiles();
+  });
+  $("#month-select").addEventListener("change", (e) => {
+    MONTH = e.target.value; renderFiles();
+  });
+
+  $("#scan-btn").addEventListener("click", async () => {
+    $("#scan-btn").disabled = true;
+    $("#scan-status").textContent = "Starting scan\u2026";
+    try {
+      await api("/api/once", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Auth-Token": TOKEN},
+        body: JSON.stringify({action: "scan"}),
+      });
+    } catch (e) { $("#scan-status").textContent = "Scan failed to start"; }
+    refresh();
+  });
+
+  $("#sort").addEventListener("change", (e) => {
+    SORT = e.target.value;
+    renderFiles();
+  });
+
+  refresh();
+  setInterval(refresh, 2000);
+  loadFiles();
+  setInterval(loadFiles, 10000);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fs-organizer"
+version = "0.2.0"
+description = "Lightweight, rule-based file-system organizer with an AI fallback for unknown files."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "watchdog>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+fs-organizer = "fs_organizer.__main__:main"
+
+[tool.setuptools]
+packages = ["fs_organizer"]
+
+[tool.setuptools.package-data]
+fs_organizer = ["dashboard.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
