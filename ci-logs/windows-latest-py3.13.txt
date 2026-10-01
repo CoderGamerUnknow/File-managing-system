@@ -1,0 +1,379 @@
+run: 36831334628  sha: 143c91f6a0542452f734f14276fafaea3f8d6520
+
+======== pytest.log ========
+============================= test session starts =============================
+platform win32 -- Python 3.13.15, pytest-9.1.1, pluggy-1.6.0 -- C:\hostedtoolcache\windows\Python\3.13.15\x64\python.exe
+cachedir: .pytest_cache
+rootdir: D:\a\File-managing-system\File-managing-system
+configfile: pyproject.toml
+testpaths: tests
+collecting ... collected 293 items
+
+tests/test_ai.py::TestExtractJsonObject::test_plain_json PASSED          [  0%]
+tests/test_ai.py::TestExtractJsonObject::test_json_with_prose PASSED     [  0%]
+tests/test_ai.py::TestExtractJsonObject::test_json_in_code_fence PASSED  [  1%]
+tests/test_ai.py::TestExtractJsonObject::test_nested_object_takes_outer PASSED [  1%]
+tests/test_ai.py::TestExtractJsonObject::test_no_json_raises_valueerror PASSED [  1%]
+tests/test_ai.py::TestExtractJsonObject::test_invalid_json_raises PASSED [  2%]
+tests/test_ai.py::TestReadPreview::test_reads_text PASSED                [  2%]
+tests/test_ai.py::TestReadPreview::test_truncates_to_max_bytes PASSED    [  2%]
+tests/test_ai.py::TestReadPreview::test_binary_replaced_lossily PASSED   [  3%]
+tests/test_ai.py::TestReadPreview::test_missing_file_returns_empty PASSED [  3%]
+tests/test_ai.py::TestBuildPrompt::test_contains_categories_and_filename PASSED [  3%]
+tests/test_ai.py::TestBuildPrompt::test_default_categories_when_none_allowed PASSED [  4%]
+tests/test_ai.py::TestClassifyWithAI::test_disabled_returns_none PASSED  [  4%]
+tests/test_ai.py::TestClassifyWithAI::test_ollama_success PASSED         [  4%]
+tests/test_ai.py::TestClassifyWithAI::test_openai_success PASSED         [  5%]
+tests/test_ai.py::TestClassifyWithAI::test_openai_key_from_env PASSED    [  5%]
+tests/test_ai.py::TestClassifyWithAI::test_category_stripped_of_quotes PASSED [  5%]
+tests/test_ai.py::TestClassifyWithAI::test_disallowed_category_returns_none PASSED [  6%]
+tests/test_ai.py::TestClassifyWithAI::test_empty_category_returns_none PASSED [  6%]
+tests/test_ai.py::TestClassifyWithAI::test_garbage_reply_returns_none PASSED [  6%]
+tests/test_ai.py::TestClassifyWithAI::test_network_error_returns_none PASSED [  7%]
+tests/test_ai.py::TestClassifyWithAI::test_missing_message_key_returns_none PASSED [  7%]
+tests/test_ai.py::TestClassifyWithAI::test_unknown_provider_returns_none PASSED [  7%]
+tests/test_cli.py::test_one_shot_organizes_files PASSED                  [  8%]
+tests/test_cli.py::test_one_shot_skips_ignored PASSED                    [  8%]
+tests/test_cli.py::test_one_shot_counts_nothing_when_empty PASSED        [  8%]
+tests/test_cli.py::test_main_bad_config_exit_code PASSED                 [  9%]
+tests/test_cli.py::test_main_missing_config_file PASSED                  [  9%]
+tests/test_cli.py::test_main_missing_config_arg PASSED                   [  9%]
+tests/test_cli.py::test_one_shot_dry_run_leaves_everything PASSED        [ 10%]
+tests/test_cli.py::test_log_file_rotates_instead_of_growing_forever PASSED [ 10%]
+tests/test_config.py::test_loads_minimal_config PASSED                   [ 10%]
+tests/test_config.py::test_missing_watch_folders_raises PASSED           [ 11%]
+tests/test_config.py::test_nonexistent_watch_folder_raises PASSED        [ 11%]
+tests/test_config.py::test_invalid_json_raises PASSED                    [ 11%]
+tests/test_config.py::test_rule_keys_must_start_with_dot PASSED          [ 12%]
+tests/test_config.py::test_extension_case_normalized PASSED              [ 12%]
+tests/test_config.py::test_openai_requires_api_key PASSED                [ 12%]
+tests/test_config.py::test_invalid_provider_raises PASSED                [ 13%]
+tests/test_config.py::test_dry_run_flag PASSED                           [ 13%]
+tests/test_flaw_regressions.py::TestFlaw1MoveRace::test_concurrent_same_name_moves_both_survive PASSED [ 13%]
+tests/test_flaw_regressions.py::TestFlaw1MoveRace::test_per_directory_locks_are_shared PASSED [ 14%]
+tests/test_flaw_regressions.py::TestFlaw2OneShotLoopGuard::test_one_shot_never_reprocesses_target_root PASSED [ 14%]
+tests/test_flaw_regressions.py::TestFlaw3RuntimeErrorEscape::test_openai_without_key_returns_none PASSED [ 15%]
+tests/test_flaw_regressions.py::TestFlaw4WatchFolderScope::test_moved_file_outside_watch_roots_not_scheduled PASSED [ 15%]
+tests/test_flaw_regressions.py::TestFlaw4WatchFolderScope::test_moved_file_inside_watch_roots_is_scheduled PASSED [ 15%]
+tests/test_flaw_regressions.py::TestFlaw4WatchFolderScope::test_created_file_outside_watch_roots_not_scheduled PASSED [ 16%]
+tests/test_flaw_regressions.py::TestFlaw5AIAllowListValidation::test_enabled_with_empty_allowed_subfolders_raises PASSED [ 16%]
+tests/test_flaw_regressions.py::TestFlaw5AIAllowListValidation::test_ai_must_be_an_object PASSED [ 16%]
+tests/test_flaw_regressions.py::TestFlaw5AIAllowListValidation::test_ai_null_is_accepted PASSED [ 17%]
+tests/test_flaw_regressions.py::TestFlaw6AICaseInsensitive::test_lowercase_category_accepted PASSED [ 17%]
+tests/test_flaw_regressions.py::TestFlaw6AICaseInsensitive::test_padded_category_accepted PASSED [ 17%]
+tests/test_flaw_regressions.py::TestFlaw7LoggingReconfiguration::test_configure_logging_can_be_called_twice PASSED [ 18%]
+tests/test_flaw_regressions.py::TestFlaw7LoggingReconfiguration::test_no_stream_handler_when_stderr_missing PASSED [ 18%]
+tests/test_flaw_regressions.py::TestFlaw7LoggingReconfiguration::test_pythonw_without_log_file_disables_logging PASSED [ 18%]
+tests/test_flaw_regressions.py::TestFlaw8DryRunCount::test_dry_run_reports_would_move_count PASSED [ 19%]
+tests/test_flaw_regressions.py::TestFlaw9IgnorePatternScope::test_name_pattern_never_matches_full_path PASSED [ 19%]
+tests/test_flaw_regressions.py::TestFlaw9IgnorePatternScope::test_path_patterns_require_separator PASSED [ 19%]
+tests/test_flaw_regressions.py::TestFlaw9IgnorePatternScope::test_name_patterns_still_work PASSED [ 20%]
+tests/test_flaw_regressions.py::TestFlaw10GracefulShutdown::test_watcher_stop_shuts_everything_down PASSED [ 20%]
+tests/test_flaw_regressions.py::TestFlaw10GracefulShutdown::test_pool_shutdown_joins_workers PASSED [ 20%]
+tests/test_flaw_regressions.py::TestFlaw11BoundedQueue::test_queue_full_drops_task PASSED [ 21%]
+tests/test_flaw_regressions.py::TestFlaw12CategoryTraversal::test_traversal_category_refused PASSED [ 21%]
+tests/test_flaw_regressions.py::TestFlaw12CategoryTraversal::test_dotdot_inside_root_still_ok PASSED [ 21%]
+tests/test_flaw_regressions.py::TestFlaw13DebouncerReentrantSchedule::test_callback_may_reschedule_without_deadlock PASSED [ 22%]
+tests/test_flaw_regressions.py::TestFlaw14NonNegativeCoercion::test_zero_accepted PASSED [ 22%]
+tests/test_flaw_regressions.py::TestFlaw14NonNegativeCoercion::test_negative_rejected PASSED [ 22%]
+tests/test_flaw_regressions.py::TestFlaw14NonNegativeCoercion::test_zero_stability_in_config PASSED [ 23%]
+tests/test_flaw_regressions.py::TestFlaw15InterruptibleWait::test_wait_forever_exits_when_event_set PASSED [ 23%]
+tests/test_flaw_regressions.py::TestFlaw16SameFileError::test_same_file_error_reported_as_skipped PASSED [ 23%]
+tests/test_flaw_regressions.py::TestFlaw17AINeverRaises::test_null_category_value_returns_none PASSED [ 24%]
+tests/test_flaw_regressions.py::TestFlaw17AINeverRaises::test_non_string_category_returns_none PASSED [ 24%]
+tests/test_flaw_regressions.py::TestFlaw17AINeverRaises::test_non_string_base_url_returns_none PASSED [ 24%]
+tests/test_flaw_regressions.py::TestFlaw18AIStringValidation::test_non_string_base_url_rejected PASSED [ 25%]
+tests/test_flaw_regressions.py::TestFlaw18AIStringValidation::test_non_string_model_rejected PASSED [ 25%]
+tests/test_flaw_regressions.py::TestFlaw18AIStringValidation::test_non_string_api_key_rejected PASSED [ 25%]
+tests/test_flaw_regressions.py::TestFlaw18AIStringValidation::test_null_api_key_still_accepted PASSED [ 26%]
+tests/test_flaw_regressions.py::TestFlaw19GracefulDrainOnShutdown::test_pool_shutdown_finishes_queued_tasks PASSED [ 26%]
+tests/test_flaw_regressions.py::TestFlaw19GracefulDrainOnShutdown::test_watcher_stop_handles_files_pending_before_stop PASSED [ 26%]
+tests/test_flaw_regressions.py::TestFlaw20DuplicateEventsCoalesce::test_duplicate_while_running_gets_single_followup PASSED [ 27%]
+tests/test_flaw_regressions.py::TestFlaw20DuplicateEventsCoalesce::test_queued_duplicate_fully_absorbed_no_extra_run PASSED [ 27%]
+tests/test_flaw_regressions.py::TestFlaw20DuplicateEventsCoalesce::test_queue_full_releases_key_no_leak PASSED [ 27%]
+tests/test_flaw_regressions.py::TestFlaw20DuplicateEventsCoalesce::test_watcher_duplicate_events_single_move PASSED [ 28%]
+tests/test_flaw_regressions.py::TestFlaw21SignalInterruptibleMainLoop::test_wait_forever_polls_in_short_slices PASSED [ 28%]
+tests/test_flaw_regressions.py::TestFlaw22TransientLockRetry::test_winerror32_classified_transient PASSED [ 29%]
+tests/test_flaw_regressions.py::TestFlaw22TransientLockRetry::test_other_permission_error_not_transient PASSED [ 29%]
+tests/test_flaw_regressions.py::TestFlaw22TransientLockRetry::test_locked_file_retried_then_moves PASSED [ 29%]
+tests/test_flaw_regressions.py::TestFlaw22TransientLockRetry::test_locked_file_gives_up_after_cap PASSED [ 30%]
+tests/test_flaw_regressions.py::TestFlaw22TransientLockRetry::test_success_clears_exhausted_state PASSED [ 30%]
+tests/test_flaw_regressions.py::TestFlaw23SingleConfigDefinition::test_single_definition_of_public_names PASSED [ 30%]
+tests/test_flaw_regressions.py::TestFlaw24EffectiveIgnoreEverywhere::test_move_file_ignores_builtin_patterns PASSED [ 31%]
+tests/test_flaw_regressions.py::TestFlaw24EffectiveIgnoreEverywhere::test_organizer_ignores_builtin_patterns PASSED [ 31%]
+tests/test_flaw_regressions.py::TestFlaw24EffectiveIgnoreEverywhere::test_plan_actions_ignores_builtin_patterns PASSED [ 31%]
+tests/test_flaw_regressions.py::TestFlaw24EffectiveIgnoreEverywhere::test_one_shot_ignores_builtin_patterns PASSED [ 32%]
+tests/test_flaw_regressions.py::TestFlaw25ScanScopeMatchesWatcher::test_nested_file_not_advertised PASSED [ 32%]
+tests/test_flaw_regressions.py::TestFlaw25ScanScopeMatchesWatcher::test_scan_returns_never_exceeds_cap PASSED [ 32%]
+tests/test_flaw_regressions.py::TestFlaw26MismatchedCategories::test_symmetric_difference_reported PASSED [ 33%]
+tests/test_flaw_regressions.py::TestFlaw26MismatchedCategories::test_matching_policy_reports_empty PASSED [ 33%]
+tests/test_flaw_regressions.py::TestFlaw26MismatchedCategories::test_no_provider_named_category PASSED [ 33%]
+tests/test_flaw_regressions.py::TestFlaw27WatchDiagPerFolder::test_counts_are_per_folder PASSED [ 34%]
+tests/test_flaw_regressions.py::TestFlaw27WatchDiagPerFolder::test_truncation_flagged_not_silent PASSED [ 34%]
+tests/test_flaw_regressions.py::TestFlaw28NoSecretsInDumps::test_to_dict_redacts_api_key PASSED [ 34%]
+tests/test_flaw_regressions.py::TestFlaw28NoSecretsInDumps::test_watch_diag_output_has_no_secret PASSED [ 35%]
+tests/test_flaw_regressions.py::TestFlaw29ScanCountBaseline::test_scan_counts_only_new_moves PASSED [ 35%]
+tests/test_flaw_regressions.py::TestFlaw29ScanCountBaseline::test_scan_counter_not_capped_by_ring_buffer PASSED [ 35%]
+tests/test_flaw_regressions.py::TestFlaw30CompoundSuffixCollisions::test_tar_gz_collision_suffixes_whole_archive PASSED [ 36%]
+tests/test_flaw_regressions.py::TestFlaw31AIErrorPrefixes::test_non_string_base_url_message_names_ai_key PASSED [ 36%]
+tests/test_flaw_regressions.py::TestFlaw32ResolveFormStableGuard::test_guard_ignores_extended_path_prefix PASSED [ 36%]
+tests/test_flaw_regressions.py::TestFlaw32ResolveFormStableGuard::test_guard_strips_repeated_extended_prefix PASSED [ 37%]
+tests/test_flaw_regressions.py::TestFlaw32ResolveFormStableGuard::test_move_with_extended_form_resolved_dest_succeeds PASSED [ 37%]
+tests/test_flaw_regressions.py::TestFlaw33FormTolerantLoopGuards::test_one_shot_loop_guard_tolerant PASSED [ 37%]
+tests/test_flaw_regressions.py::TestFlaw33FormTolerantLoopGuards::test_scan_target_root_guard_tolerant PASSED [ 38%]
+tests/test_flaw_regressions.py::TestFlaw33FormTolerantLoopGuards::test_organizer_guard_tolerant PASSED [ 38%]
+tests/test_flaw_regressions.py::TestFlaw34FilesPayloadTruncation::test_exact_cap_is_not_truncation PASSED [ 38%]
+tests/test_flaw_regressions.py::TestFlaw34FilesPayloadTruncation::test_over_cap_is_truncation PASSED [ 39%]
+tests/test_flaw_regressions.py::TestFlaw35VanishingFolderScan::test_one_shot_survives_folder_vanishing_mid_scan PASSED [ 39%]
+tests/test_flaw_regressions.py::TestFlaw35VanishingFolderScan::test_watch_diag_matched_rules_survives_vanishing_folder PASSED [ 39%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_append_and_read_roundtrip PASSED [ 40%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_disabled_journal_is_a_noop PASSED [ 40%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_torn_final_line_is_skipped PASSED [ 40%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_since_ts_cursor PASSED [ 41%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_missing_journal_reads_as_empty PASSED [ 41%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_move_file_records_journal_entry PASSED [ 41%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_unwritable_journal_never_breaks_moving PASSED [ 42%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_files_payload_prefers_journal_creation_date PASSED [ 42%]
+tests/test_flaw_regressions.py::TestFlaw36MoveJournal::test_files_payload_without_journal_uses_stat_fallback PASSED [ 43%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_cross_volume_decision_uses_splitdrive PASSED [ 43%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_same_volume_move_keeps_shutil_path PASSED [ 43%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_cross_volume_move_takes_staged_path PASSED [ 44%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_staged_move_transfers_content_and_removes_source PASSED [ 44%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_mid_copy_failure_leaves_source_intact_and_no_temp PASSED [ 44%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_failure_during_rename_deletes_temp PASSED [ 45%]
+tests/test_flaw_regressions.py::TestFlaw37StagedCrossVolumeMove::test_part_files_are_ignored_by_scans PASSED [ 45%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_scan_is_top_level_only_by_default PASSED [ 45%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_recursive_scan_includes_subfolders PASSED [ 46%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_one_shot_defaults_to_top_level PASSED [ 46%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_one_shot_recursive_organizes_nested PASSED [ 46%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_recursive_one_shot_still_skips_target_root_subtree PASSED [ 47%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_watcher_passes_recursive_flag_to_observer PASSED [ 47%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_recursive_flag_round_trips_through_config PASSED [ 47%]
+tests/test_flaw_regressions.py::TestFlaw38RecursiveOptIn::test_recursive_must_be_boolean PASSED [ 48%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_seq_is_monotonic_and_gap_free PASSED [ 48%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_seq_survives_ring_wrap PASSED [ 48%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_since_returns_only_newer_oldest_first PASSED [ 49%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_range_reports_retained_bounds PASSED [ 49%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_parse_since_query_param PASSED [ 49%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_api_events_since_endpoint PASSED [ 50%]
+tests/test_flaw_regressions.py::TestFlaw39EventSequence::test_status_payload_exposes_recursive PASSED [ 50%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_move_with_date_subfolders_records_rule_category PASSED [ 50%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_move_without_date_subfolders_still_correct PASSED [ 51%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_mover_passes_explicit_category PASSED [ 51%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_derived_category_is_first_segment_under_root PASSED [ 51%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_derivation_outside_root_and_broken_config_never_raises PASSED [ 52%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_explicit_category_beats_derivation PASSED [ 52%]
+tests/test_flaw_regressions.py::TestFlaw40JournalCategory::test_dashboard_category_and_journal_agree PASSED [ 52%]
+tests/test_flaw_regressions.py::TestFlaw41MatchedRulesScope::test_recursive_matched_rules_include_nested PASSED [ 53%]
+tests/test_flaw_regressions.py::TestFlaw41MatchedRulesScope::test_top_level_matched_rules_unchanged PASSED [ 53%]
+tests/test_flaw_regressions.py::TestFlaw41MatchedRulesScope::test_ignored_files_never_counted_as_matched PASSED [ 53%]
+tests/test_flaw_regressions.py::TestFlaw42RulesPayloadFolders::test_missing_watch_folder_not_advertised PASSED [ 54%]
+tests/test_flaw_regressions.py::TestFlaw42RulesPayloadFolders::test_matches_status_payload_folders PASSED [ 54%]
+tests/test_flaw_regressions.py::TestFlaw42RulesPayloadFolders::test_all_folders_exist_passthrough PASSED [ 54%]
+tests/test_flaw_regressions.py::TestFlaw43PlanRowCategory::test_plan_category_with_date_subfolders_is_rule_category PASSED [ 55%]
+tests/test_flaw_regressions.py::TestFlaw43PlanRowCategory::test_plan_category_without_date_subfolders_unchanged PASSED [ 55%]
+tests/test_flaw_regressions.py::TestFlaw43PlanRowCategory::test_plan_row_category_matches_move_and_journal PASSED [ 55%]
+tests/test_flaw_regressions.py::TestFlaw44CheckReportMissingFolders::test_missing_folder_called_out_not_listed_as_watched PASSED [ 56%]
+tests/test_flaw_regressions.py::TestFlaw44CheckReportMissingFolders::test_all_present_no_missing_note PASSED [ 56%]
+tests/test_flaw_regressions.py::TestFlaw44CheckReportMissingFolders::test_matches_watch_diag_status PASSED [ 56%]
+tests/test_flaw_regressions.py::TestFlaw45ActivityLogEventShape::test_event_has_all_keys PASSED [ 57%]
+tests/test_flaw_regressions.py::TestFlaw45ActivityLogEventShape::test_events_after_ring_wrap_still_complete PASSED [ 57%]
+tests/test_flaw_regressions.py::TestFlaw46PlanStatRace::test_plan_survives_file_vanishing_after_scan PASSED [ 58%]
+tests/test_flaw_regressions.py::TestFlaw46PlanStatRace::test_plan_row_uses_passed_mtime_not_a_fresh_stat PASSED [ 58%]
+tests/test_mover.py::test_move_into_category_folder PASSED               [ 58%]
+tests/test_mover.py::test_move_creates_nested_dirs PASSED                [ 59%]
+tests/test_mover.py::test_collision_gets_suffixed PASSED                 [ 59%]
+tests/test_mover.py::test_repeated_collisions_increment PASSED           [ 59%]
+tests/test_mover.py::test_unique_destination_direct PASSED               [ 60%]
+tests/test_mover.py::test_dry_run_moves_nothing PASSED                   [ 60%]
+tests/test_mover.py::test_ignored_file_skipped PASSED                    [ 60%]
+tests/test_mover.py::test_vanished_file_skipped PASSED                   [ 61%]
+tests/test_mover.py::test_permission_error_skipped PASSED                [ 61%]
+tests/test_mover.py::test_destination_with_date_subfolders PASSED        [ 61%]
+tests/test_mover_plan.py::TestPlan::test_lists_only_matching_extensions PASSED [ 62%]
+tests/test_mover_plan.py::TestPlan::test_respects_ignored_and_unknown_extensions PASSED [ 62%]
+tests/test_mover_plan.py::TestPlan::test_truncated_when_over_cap PASSED  [ 62%]
+tests/test_mover_plan.py::TestPlan::test_empty_root PASSED               [ 63%]
+tests/test_mover_plan.py::TestPlan::test_destination_matches_move_file PASSED [ 63%]
+tests/test_mover_plan.py::TestPlanSummary::test_summary_covers_plan PASSED [ 63%]
+tests/test_phase2.py::TestAgePolicy::test_no_policy_means_everything_allowed PASSED [ 64%]
+tests/test_phase2.py::TestAgePolicy::test_min_age_blocks_too_new PASSED  [ 64%]
+tests/test_phase2.py::TestAgePolicy::test_min_age_passes_old_enough PASSED [ 64%]
+tests/test_phase2.py::TestAgePolicy::test_max_age_blocks_too_old PASSED  [ 65%]
+tests/test_phase2.py::TestAgePolicy::test_max_age_passes_recent PASSED   [ 65%]
+tests/test_phase2.py::TestAgePolicy::test_move_file_skips_outside_age_policy PASSED [ 65%]
+tests/test_phase2.py::TestAgePolicy::test_vanished_file_allows PASSED    [ 66%]
+tests/test_phase2.py::TestAgePolicy::test_config_roundtrip PASSED        [ 66%]
+tests/test_phase2.py::TestAgePolicy::test_invalid_age_policy_rejected PASSED [ 66%]
+tests/test_phase2.py::TestAgePolicy::test_age_policy_must_be_object PASSED [ 67%]
+tests/test_phase2.py::TestAgePolicy::test_one_shot_respects_age_policy PASSED [ 67%]
+tests/test_phase2.py::TestDestinationTemplate::test_default_template_is_plain_category PASSED [ 67%]
+tests/test_phase2.py::TestDestinationTemplate::test_use_date_subfolders_still_works PASSED [ 68%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_year_month PASSED [ 68%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_extra_text PASSED [ 68%]
+tests/test_phase2.py::TestDestinationTemplate::test_move_with_template_lands_correctly PASSED [ 69%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_wins_over_date_subfolders PASSED [ 69%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_requires_category_token PASSED [ 69%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_rejects_absolute PASSED [ 70%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_rejects_empty PASSED [ 70%]
+tests/test_phase2.py::TestDestinationTemplate::test_template_must_be_object PASSED [ 70%]
+tests/test_phase2.py::TestDestinationTemplate::test_traversal_category_refused_with_template PASSED [ 71%]
+tests/test_phase2.py::TestDestinationTemplate::test_plan_reports_template_destination PASSED [ 71%]
+tests/test_phase2.py::TestDestinationTemplate::test_plan_actions_age_bucket PASSED [ 72%]
+tests/test_phase2.py::TestDestinationTemplate::test_dashboard_payloads_carry_new_fields PASSED [ 72%]
+tests/test_pool.py::TestWorkerPool::test_executes_submitted_tasks PASSED [ 72%]
+tests/test_pool.py::TestWorkerPool::test_executes_with_args PASSED       [ 73%]
+tests/test_pool.py::TestWorkerPool::test_worker_survives_exception PASSED [ 73%]
+tests/test_pool.py::TestWorkerPool::test_shutdown_stops_workers PASSED   [ 73%]
+tests/test_pool.py::TestDebouncer::test_fires_only_after_quiet_period PASSED [ 74%]
+tests/test_pool.py::TestDebouncer::test_coalesces_burst_of_schedules PASSED [ 74%]
+tests/test_pool.py::TestDebouncer::test_different_paths_fire_separately PASSED [ 74%]
+tests/test_pool.py::TestDebouncer::test_callback_exception_does_not_kill_loop PASSED [ 75%]
+tests/test_pool.py::TestDebouncer::test_count_pending_helper PASSED      [ 75%]
+tests/test_pool.py::TestDebouncer::test_reschedule_extends_delay PASSED  [ 75%]
+tests/test_rules.py::test_match_simple_extension PASSED                  [ 76%]
+tests/test_rules.py::test_match_case_insensitive PASSED                  [ 76%]
+tests/test_rules.py::test_no_match_returns_none PASSED                   [ 76%]
+tests/test_rules.py::test_file_without_extension PASSED                  [ 77%]
+tests/test_rules.py::test_hidden_dotfile_has_no_suffix PASSED            [ 77%]
+tests/test_rules.py::test_ignore_by_name PASSED                          [ 77%]
+tests/test_rules.py::test_ignore_by_full_path PASSED                     [ 78%]
+tests/test_rules.py::test_not_ignored PASSED                             [ 78%]
+tests/test_rules.py::test_dotfiles_ignored PASSED                        [ 78%]
+tests/test_runtime.py::TestRuntimeStats::test_counters_follow_events PASSED [ 79%]
+tests/test_runtime.py::TestRuntimeStats::test_bytes_and_ai_counters PASSED [ 79%]
+tests/test_runtime.py::TestRuntimeStats::test_organizer_increments_bytes_and_ai PASSED [ 79%]
+tests/test_runtime.py::TestRuntimeStats::test_status_payload_includes_stats_and_paused PASSED [ 80%]
+tests/test_runtime.py::TestPauseResume::test_pause_holds_then_resume_dispatches PASSED [ 80%]
+tests/test_runtime.py::TestPauseResume::test_pause_state_reported_in_activity PASSED [ 80%]
+tests/test_runtime.py::TestPauseResume::test_stop_while_paused_drains_held PASSED [ 81%]
+tests/test_runtime.py::TestPauseResume::test_pause_endpoint PASSED       [ 81%]
+tests/test_runtime.py::TestLiveReload::test_apply_config_swaps_watches PASSED [ 81%]
+tests/test_runtime.py::TestLiveReload::test_apply_config_failure_restores_old PASSED [ 82%]
+tests/test_runtime.py::TestLiveReload::test_reload_endpoint_rejects_invalid_and_keeps_old PASSED [ 82%]
+tests/test_runtime.py::TestLiveReload::test_reload_without_config_path_is_graceful PASSED [ 82%]
+tests/test_runtime.py::TestSingleInstance::test_acquire_release_cycle PASSED [ 83%]
+tests/test_runtime.py::TestSingleInstance::test_second_acquire_refused PASSED [ 83%]
+tests/test_runtime.py::TestSingleInstance::test_force_overrides_held PASSED [ 83%]
+tests/test_runtime.py::TestSingleInstance::test_stale_lock_replaced PASSED [ 84%]
+tests/test_runtime.py::TestSingleInstance::test_garbage_lock_treated_stale PASSED [ 84%]
+tests/test_runtime.py::TestSingleInstance::test_context_manager_releases PASSED [ 84%]
+tests/test_runtime.py::TestSingleInstance::test_daemon_refuses_second_instance_end_to_end PASSED [ 85%]
+tests/test_ui.py::TestActivityLog::test_add_and_snapshot_newest_first PASSED [ 85%]
+tests/test_ui.py::TestActivityLog::test_ring_buffer_cap PASSED           [ 86%]
+tests/test_ui.py::TestActivityLog::test_survives_unusual_paths PASSED    [ 86%]
+tests/test_ui.py::TestStatusPayload::test_groups_rules_by_category PASSED [ 86%]
+tests/test_ui.py::TestStatusPayload::test_ai_summary PASSED              [ 87%]
+tests/test_ui.py::TestDashboard::test_serves_page_and_api PASSED         [ 87%]
+tests/test_ui.py::TestDashboard::test_post_requires_token PASSED         [ 87%]
+tests/test_ui.py::TestDashboard::test_post_with_token_runs_scan PASSED   [ 88%]
+tests/test_ui.py::TestDashboard::test_no_token_no_404_leaks PASSED       [ 88%]
+tests/test_ui.py::TestDashboard::test_stop_is_idempotent PASSED          [ 88%]
+tests/test_ui.py::TestDashboard::test_starts_only_once PASSED            [ 89%]
+tests/test_ui.py::TestFilesPayload::test_build_groups_sorts_days_newest_first PASSED [ 89%]
+tests/test_ui.py::TestFilesPayload::test_summary_per_day_counts_bytes_categories PASSED [ 89%]
+tests/test_ui.py::TestFilesPayload::test_months_index_newest_first PASSED [ 90%]
+tests/test_ui.py::TestFilesPayload::test_payload_includes_summary_and_months PASSED [ 90%]
+tests/test_ui.py::TestFilesPayload::test_files_scanned_and_counted PASSED [ 90%]
+tests/test_ui.py::TestFilesPayload::test_empty_root_returns_empty_groups PASSED [ 91%]
+tests/test_ui.py::TestFilesPayload::test_missing_root_returns_empty_groups PASSED [ 91%]
+tests/test_ui.py::TestFilesPayload::test_max_files_cap_sets_truncated PASSED [ 91%]
+tests/test_ui.py::TestFilesPayload::test_files_endpoint_served PASSED    [ 92%]
+tests/test_ui.py::TestActivityLogDisplayName::test_display_name_overrides_path_name PASSED [ 92%]
+tests/test_ui.py::TestActivityLogDisplayName::test_display_name_survives_number_paths PASSED [ 92%]
+tests/test_ui.py::TestDashboardErrorPaths::test_start_failure_raises_and_state_consistent PASSED [ 93%]
+tests/test_ui.py::TestDashboardErrorPaths::test_stop_after_failed_start_is_safe PASSED [ 93%]
+tests/test_ui.py::TestDashboardErrorPaths::test_oversized_post_body_rejected PASSED [ 93%]
+tests/test_ui.py::TestWatcherActivityFeed::test_organizer_reports_to_activity PASSED [ 94%]
+tests/test_ui.py::TestWatcherActivityFeed::test_watcher_accepts_activity_kwarg PASSED [ 94%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[root-file-no-subfolders] PASSED [ 94%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[category-folder-no-subfolders] PASSED [ 95%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[date-folder-no-subfolders] PASSED [ 95%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[root-file-date-subfolders] PASSED [ 95%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[category-folder-date-subfolders] PASSED [ 96%]
+tests/test_ui_files_category.py::test_files_payload_category_uses_first_segment_under_root[date-folder-date-subfolders] PASSED [ 96%]
+tests/test_watcher.py::TestOrganizerHandle::test_moves_file_by_rule PASSED [ 96%]
+tests/test_watcher.py::TestOrganizerHandle::test_ignores_matching_patterns PASSED [ 97%]
+tests/test_watcher.py::TestOrganizerHandle::test_no_rule_no_ai_leaves_file PASSED [ 97%]
+tests/test_watcher.py::TestOrganizerHandle::test_skips_non_files PASSED  [ 97%]
+tests/test_watcher.py::TestOrganizerHandle::test_never_touches_target_root PASSED [ 98%]
+tests/test_watcher.py::TestOrganizerHandle::test_ai_used_only_for_configured_extensions PASSED [ 98%]
+tests/test_watcher.py::TestOrganizerHandle::test_ai_success_moves_file PASSED [ 98%]
+tests/test_watcher.py::TestOrganizerHandle::test_ai_failure_leaves_file PASSED [ 99%]
+tests/test_watcher.py::TestEventHandler::test_created_file_schedules_debounce PASSED [ 99%]
+tests/test_watcher.py::TestEventHandler::test_directory_events_not_scheduled PASSED [100%]
+
+============================ 293 passed in 24.91s =============================
+
+======== smoke_dryrun.log ========
+Temp dir: C:\Users\RUNNER~1\AppData\Local\Temp\fsorg_e2e_647l4fwm
+
+  PASS  watcher started
+  PASS  early files handled in dry-run
+  PASS  clean exit (KeyboardInterrupt shutdown path)  [rc=0]
+  PASS  'Stopping...' printed (graceful path taken)
+  PASS  all 4 files got dry-run lines (late file drained on shutdown)  [4/4]
+  PASS  dry-run created no output dirs
+  PASS  dry-run moved nothing
+
+Dry-run lines from the child:
+  07:37:40 INFO    [dry-run] Would move C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\watch\early_0.txt -> C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\out\Documents\early_0.txt
+  07:37:40 INFO    [dry-run] Would move C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\watch\early_1.txt -> C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\out\Documents\early_1.txt
+  07:37:40 INFO    [dry-run] Would move C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\watch\early_2.txt -> C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\out\Documents\early_2.txt
+  07:37:40 INFO    [dry-run] Would move C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\watch\late.txt -> C:\Users\runneradmin\AppData\Local\Temp\fsorg_e2e_647l4fwm\out\Documents\late.txt
+
+OK: shutdown drained the late file; dry-run touched nothing.
+
+======== smoke_ui.log ========
+  FAIL  status lists target root
+  PASS  status groups categories
+  PASS  moved file landed in target
+  PASS  png landed in target
+  PASS  /api/files lists both files
+  PASS  /api/files rows carry names
+  PASS  /api/files days sorted newest first
+  PASS  /api/files has per-day summary
+  PASS  /api/files has month index
+  PASS  month keys are YYYY-MM
+  PASS  bad token rejected
+
+API status: {
+  "watch_folders": [
+    "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\fsorg_ui_up0ecf4q\\watch"
+  ],
+  "target_root": "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\fsorg_ui_up0ecf4q\\out",
+  "categories": {
+    "Documents": [
+      ".txt"
+    ],
+    "Images": [
+      ".png"
+    ]
+  },
+  "ignore_patterns": [
+    ".*",
+    "*.tmp",
+    "*.part",
+    "*.crdownload",
+    "*~",
+    "desktop.ini",
+
+API files: {
+  "target_root": "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\fsorg_ui_up0ecf4q\\out",
+  "total": 2,
+  "truncated": false,
+  "groups": {
+    "2026-10-01": [
+      {
+        "name": "pic.png",
+        "category": "Images",
+        "created": 1790840261,
+        "size": 8
+      },
+      {
+        "name": "doc.txt",
+        "category": "Documents",
+        "created": 1790840261,
+        "size": 5
+
+FAILED: 1 check(s)
