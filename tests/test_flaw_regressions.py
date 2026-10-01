@@ -2109,8 +2109,10 @@ class TestFlaw43PlanRowCategory:
         assert not row["category"].startswith("20"), (
             "plan reported the month folder as the category (flaw #43)"
         )
-        # The destination still carries the date segment.
-        assert row["destination"].parent.name == "2026-09"
+        # The destination still carries the date segment (the file was just
+        # written, so its mtime month is the current month — hardcoded, this
+        # assertion became a time bomb on the first of the next month).
+        assert row["destination"].parent.name == time.strftime("%Y-%m")
 
     def test_plan_category_without_date_subfolders_unchanged(self, tmp_path):
         from fs_organizer.mover import plan
@@ -2215,3 +2217,56 @@ class TestFlaw45ActivityLogEventShape:
             log.add("moved", f"f{i}.txt")
         for event in log.snapshot():
             assert self.REQUIRED_KEYS <= set(event)
+
+
+# ---------------------------------------------------------------- flaw #46
+class TestFlaw46PlanStatRace:
+    """plan() stats each candidate once and passes that stat's mtime into
+    _plan_row. _plan_row used to call destination_for(path, ...) with no
+    mtime, re-statting the file a second time — a TOCTOU race: the async
+    scan can move the file between the two stats, the FileNotFoundError
+    escaped plan(), and /api/status answered 500 (Windows CI flake, and a
+    real dashboard outage window on every scan)."""
+
+    def test_plan_survives_file_vanishing_after_scan(self, tmp_path, monkeypatch):
+        """The async scan moves the file between plan()'s stat and the row
+        build — before the fix, _plan_row's second stat raised and plan()
+        (the /api/status payload) crashed with FileNotFoundError."""
+        from fs_organizer import mover
+
+        cfg = make_config(tmp_path)
+        src = tmp_path / "watch" / "a.txt"
+        src.write_text("x", encoding="utf-8")
+
+        original_destination_for = mover.destination_for
+        calls = {"n": 0}
+
+        def destination_for_vanishing(path, category, config, mtime=None):
+            # 1st call: the scan (file still there). 2nd call: the row build —
+            # the scan won the race and the source is gone by then.
+            calls["n"] += 1
+            if calls["n"] == 2:
+                src.unlink(missing_ok=True)
+            return original_destination_for(path, category, config, mtime=mtime)
+
+        monkeypatch.setattr(mover, "destination_for", destination_for_vanishing)
+        data = mover.plan(cfg)  # before the fix: FileNotFoundError escaped here
+        assert [row["name"] for row in data["rows"]] == ["a.txt"], (
+            "plan must ride out a file vanishing mid-plan, not crash"
+        )
+
+    def test_plan_row_uses_passed_mtime_not_a_fresh_stat(self, tmp_path):
+        """_plan_row must not stat again: it gets the stat the caller already
+        took. Unlink the source first — a fresh stat() would raise."""
+        from fs_organizer import mover
+
+        cfg = make_config(tmp_path)
+        src = tmp_path / "watch" / "a.txt"
+        src.write_text("x", encoding="utf-8")
+
+        stat = src.stat()
+        src.unlink()  # gone: any re-stat inside _plan_row now raises
+        row = mover._plan_row(src, "Documents", cfg, stat)
+        assert row["destination"] == cfg.resolved_target_root() / "Documents" / "a.txt"
+        assert row["category"] == "Documents"
+        assert row["size"] == stat.st_size

@@ -134,7 +134,9 @@ def _unique_destination(dest: Path) -> Path:
     raise FileExistsError(f"Too many collisions for {dest}")
 
 
-def destination_for(path: Path, category: str, config: Config) -> Path:
+def destination_for(
+    path: Path, category: str, config: Config, mtime: float | None = None
+) -> Path:
     """Compute the destination directory for a file given its category.
 
     V2: ``destination_template`` drives the layout when set — the template
@@ -142,9 +144,15 @@ def destination_for(path: Path, category: str, config: Config) -> Path:
     mtime and is resolved under the target root. The legacy
     ``use_date_subfolders`` flag keeps working (it is exactly the template
     ``{category}/{date:%Y-%m}``); the template wins if both are set.
+
+    ``mtime``: callers that have already stat'ed the file pass it in so no
+    second ``path.stat()`` happens — that second read was a TOCTOU race:
+    the async scan can move the file between the two stats and the
+    ``FileNotFoundError`` would escape ``plan()`` (HTTP 500 on /api/status).
     """
     root = config.resolved_target_root()
-    mtime = path.stat().st_mtime
+    if mtime is None:
+        mtime = path.stat().st_mtime
     template = getattr(config, "destination_template", None)
     if template is not None and template.pattern != "{category}":
         rel = template.render(category, mtime)
@@ -294,7 +302,10 @@ def _plan_row(path: Path, category: str, config: Config, stat: os.stat_result) -
     month folder as the category when ``use_date_subfolders`` is on
     (flaw #43, same class as the journal's #40).
     """
-    dest_dir = destination_for(path, category, config)
+    # Pass the already-read mtime: re-statting here re-introduced the race
+    # where the async scan moves the file between plan()'s stat and this one
+    # (FileNotFoundError escaped plan() and took /api/status down with it).
+    dest_dir = destination_for(path, category, config, mtime=stat.st_mtime)
     return {
         "name": path.name,
         "category": category,
