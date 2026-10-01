@@ -93,8 +93,12 @@ def main() -> int:
         files = json.loads(urllib.request.urlopen(base + "/api/files", timeout=2).read())
         all_rows = [f for day_files in files["groups"].values() for f in day_files]
         month_keys = [m["key"] for m in files.get("months", [])]
+        # Resolve before comparing paths: the server may report the long form
+        # of a path the client knows in 8.3 short form (Windows CI temp dir is
+        # C:\Users\RUNNER~1\... to us, ...\runneradmin\... to the server).
+        status_root = str(Path(status["target_root"]).resolve())
         checks = [
-            ("status lists target root", status["target_root"] == str(out)),
+            ("status lists target root", status_root == str(out.resolve())),
             ("status groups categories",
              set(status["categories"]) == {"Documents", "Images"}),
             ("moved file landed in target",
