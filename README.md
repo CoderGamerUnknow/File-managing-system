@@ -25,6 +25,16 @@ own output.
 - **V2 runtime controls** — single-instance guard, pause/resume, live config reload.
 - **V2 age policy** — files too new (still being written) or too old (archives) stay put.
 - **V2 destination templates** — full control of the organized layout with `{category}` and `{date:FORMAT}` tokens.
+- **V2 per-category sub-rules** — Route files differently by source folder (e.g. `.pdf` under `~/Downloads/invoices/` → `Invoices` while every other `.pdf` → `Documents`). Extension-gated and first-match-wins; evaluated before the global rule table.
+- **V2 duplicate detection** — Report-only SHA-256 scan (size pre-filter, streamed hashing, bounded walk) to find duplicate files under your watch folders without moving or deleting anything.
+- **V3 undo** — `fs-organizer CONFIG undo [N]` (and the dashboard's **Undo last** button) moves recently organized files back to where they came from, driven by the move journal. Never overwrites: a re-occupied original gets a ` (1)` suffix.
+- **V3 quarantine cleanup** — `fs-organizer CONFIG quarantine` moves every duplicate copy except the oldest into a `_Duplicates/` folder for review. Nothing is ever deleted; fully reversible with `undo`.
+- **V3 name rules** — route files by name glob or regex (`"invoice*"` → `Invoices`, `^IMG_\d+` → `Photos`), evaluated after sub-rules and before the extension table.
+- **V3 quiet hours** — only organize inside a daily `HH:MM` window (midnight wrap supported); outside it, files are left in place for the next active window.
+- **V3 AI decision cache** — opt-in persistent cache so repeat unknown files never re-hit the model (low-resource friendly).
+- **V3 rule suggestions** — `fs-organizer CONFIG suggest` mines the watch folders and journal for files no rule covers and proposes paste-ready config snippets.
+- **V3 journal export** — `fs-organizer CONFIG export --format csv|json` (or the dashboard **Export** button) dumps the full move history.
+- **V3 safety hardening** — disk-space guard (refuse moves onto a nearly-full volume) and SHA-256 integrity verification of staged cross-volume copies before the source is deleted.
 - **Stdlib-only AI client** — no SDK dependency; plain `urllib` calls.
 
 ## Installation
@@ -95,6 +105,10 @@ python -m fs_organizer config.json
 | `use_date_subfolders` | bool | `false` | Also group by file mtime: `Documents/2026-10/`. Legacy; superseded by `destination_template` (which wins if both are set). |
 | `destination_template` | object | `{category}` | **V2.** Where organized files land: `{"pattern": "{category}/{date:%Y}/{date:%Y-%m}"}` → `Organized/Documents/2026/2026-10/a.txt`. Tokens: `{category}` (required) and `{date:FORMAT}` (strftime on the file's mtime; defaults to `%Y-%m`). Rendered relative to `target_root`; absolute patterns and patterns without `{category}` are rejected; malformed date formats fall back to `%Y-%m` instead of crashing a move. |
 | `age_policy` | object | *(disabled)* | **V2.** `{"min_age_seconds": 0, "max_age_days": null}`. Files younger than `min_age_seconds` (still being written — a second line of defense behind the debouncer) or older than `max_age_days` (archives, old mailboxes) stay where they are. Both bounds are evaluated against the file's mtime; `0` / `null` disable each bound. Plans and diagnostics report skipped files in their own `would_skip_age` bucket — never as a move the organizer won't make. |
+| `sub_rules` | list of objects | *(none)* | **V2.** Per-category source-folder routing. Each rule: `{"pattern": "~/Downloads/invoices/**", "extensions": [".pdf"], "category": "Invoices"}`. A file matches when its extension is in the rule's list AND its source path matches the rule's glob (slash = full path, bare = name only). Rules are evaluated in order; the **first match wins**, and they take priority over the global `target_rules` table. So a `.pdf` inside `~/Downloads/invoices/` → `Invoices`, while every other `.pdf` → `Documents`. A leading `~` expands to your home directory just like `watch_folders` and `target_root`; backslashes are normalized for matching, so `~\\Downloads\\**` works too. Expansion is deliberately narrow: only a bare `~` or `~` + separator expands, so `~scan.pdf` still matches the literal *file name* (expanding it would read `scan.pdf` as a username) and `~someoneelse/x` is left alone. `**` is just two ordinary `*` wildcards to `fnmatch`. Your `pattern` text is stored verbatim, so `check --json` shows it unchanged. |
+| `name_rules` | list of objects | *(none)* | **V3.** Route by file *name* instead of extension: `{"pattern": "invoice*", "category": "Invoices"}` (glob), or `{"pattern": "^IMG_\\d+", "category": "Photos", "regex": true}` (regular expression matched against the name). Optional `extensions` list narrows the rule to specific suffixes. Evaluated in order after `sub_rules` and before `target_rules` — first match wins. Invalid entries (missing pattern/category, bad regex, extensions without a dot) are rejected at load with exit code 2. |
+| `quiet_hours` | object | *(disabled)* | **V3.** `{"start": "22:00", "end": "06:00"}` — organize only inside this daily window (`HH:MM`; end ≤ start wraps midnight; both unset = disabled). Outside the window the watcher leaves files in place (nothing is held) and they are picked up by the next event or scan after the window opens. |
+| `disk_space_guard` | number | `0.0` | **V3.** Minimum free-space percentage required on the destination volume before a move is allowed (`0` = off). Below the threshold the file stays where it is instead of risking a half-copied move. A volume that cannot be queried is treated as OK (failing closed would strand files forever). |
 | `dry_run` | bool | `false` | Log intended moves without moving anything. |
 | `file_stable_seconds` | number | `1.0` | How long a file must be quiet before it is moved. |
 | `recursive` | bool | `false` | **Opt-in.** Also watch and organize all *subfolders* of every watch folder. Off by default: the top-level-only scope is safer. When enabled, everything changes together — the live watcher, `--once`, plans, and diagnostics all cover the deeper scope, and the organizer's own target-root subtree stays excluded. |
@@ -113,7 +127,9 @@ python -m fs_organizer config.json
   "timeout_seconds": 15.0,
   "max_bytes_to_read": 65536,
   "extensions": [".xyz", ".dat"],
-  "allowed_subfolders": ["Documents", "Images", "Other"]
+  "allowed_subfolders": ["Documents", "Images", "Other"],
+  "cache_enabled": false,
+  "cache_path": null
 }
 ```
 
@@ -121,6 +137,7 @@ python -m fs_organizer config.json
 - **api_key** — required for `openai` (either here or via the `OPENAI_API_KEY` env var).
 - **extensions** — only files with these extensions are sent to the model.
 - **allowed_subfolders** — the model may only pick from these categories (matched case-insensitively); anything else is ignored and the file is left in place. Required when `enabled` is true. The model reads a truncated preview of the file (text, lossily decoded).
+- **cache_enabled** / **cache_path** — V3 opt-in decision cache. Successful classifications are memoized under `cache_path` (default `~/.fs-organizer/ai_cache.json`), keyed by a hash of provider + model + extension + the preview bytes the model would see — repeat files never trigger another request, and a failed request is never cached (outages don't poison it). Off by default because it writes a file.
 
 Failures are safe by design: network errors, malformed replies, or disallowed
 categories leave the file untouched — worst case, nothing happens. The API
@@ -132,6 +149,13 @@ key is redacted in every config dump (`check --json`, `watch-diag --json`).
 fs-organizer CONFIG [--once] [-v/--verbose] [--log-file F] [--ui] [--port N] [--no-browser] [--force] [--watch-files PATH]
 fs-organizer CONFIG check [--json] [--watch-files PATH]
 fs-organizer CONFIG watch-diag [--json] [--watch-files PATH]
+fs-organizer CONFIG dupes [--json] [--max-files N] [--max-mb N] [--min-size BYTES]
+fs-organizer CONFIG organize PATH... [--recursive] [--dry-run]
+fs-organizer CONFIG undo [N] [--dry-run] [--json]
+fs-organizer CONFIG suggest [--json] [--max-files N]
+fs-organizer CONFIG quarantine [--dest PATH] [--dry-run] [--json]
+fs-organizer CONFIG export [--format csv|json]
+fs-organizer CONFIG init [--output PATH] [--force]
 ```
 
 - `CONFIG` — path to the JSON config file.
@@ -160,6 +184,83 @@ otherwise match a rule), how many have no rule and are not AI-able, and the
 exact effective ignore patterns. The per-file companion: pass
 `--watch-files some/path` to get the ignore verdict for any single path.
 
+### `dupes` — find duplicate files (report-only)
+
+Scans exactly the scope the watcher acts on (top level of each watch folder,
+plus subfolders when `recursive: true`) and reports groups of 2+ identical
+files by SHA-256 hash. **Report-only**: nothing is moved, renamed, or deleted
+— it is a visibility tool first, never a mutation.
+
+Resource bounds keep it safe on huge trees:
+
+- Files whose byte size is *unique* are provably unique — their content is
+  never read.
+- Streaming SHA-256 hashes files in 1 MiB chunks (constant memory).
+- `--max-files` caps the walk (default 2000); `--max-mb` caps total content
+  read (default 256 MiB). When a cap is hit the scan stops and reports
+  `truncated: true`.
+- `--min-size` skips files smaller than N bytes (default 1).
+
+The same ignore list and target-root loop guard the organizer applies also
+protect this scan — your organized output is never a duplicate candidate.
+
+```bash
+python -m fs_organizer config.json dupes          # human summary
+python -m fs_organizer config.json dupes --json   # machine-readable JSON
+```
+
+### `undo` — move files back where they came from
+
+Reads the move journal and restores the `N` most recent organized files
+(default `N` = 1) to their original paths. Never overwrites: if the
+original is occupied again, the file is restored alongside it as
+`name (1).ext`. A destination that no longer exists is skipped with a
+reason. Requires `journal.enabled: true`; `--dry-run` previews without
+moving, `--json` prints machine-readable results.
+
+```bash
+python -m fs_organizer config.json undo        # restore the last move
+python -m fs_organizer config.json undo 5      # restore the last five
+python -m fs_organizer config.json undo 5 --dry-run
+```
+
+### `suggest` — which rule should I add next?
+
+Scans the watch folders (bounded) for files that match no rule and are not
+AI-able, and prints ready-to-paste `{ext: category}` suggestions ordered by
+how many files each extension accounts for. Also summarizes journal
+activity per category and flags AI-allowed categories that nothing has
+used. Read-only.
+
+### `quarantine` — move duplicate copies aside (never deletes)
+
+Runs the duplicate scan, then moves every copy except the oldest of each
+group into `<target_root>/_Duplicates/<date>/<hash>/` for review. Nothing
+is deleted; `undo` or a manual move puts everything back. `--dest` chooses
+another quarantine root, `--dry-run` reports without moving.
+
+### `export` — dump the move journal
+
+CSV (default) or JSON, one row per recorded move
+(`ts,ts_iso,src,dest,category,size`). The dashboard exposes the same dump
+as a download at `GET /api/export?format=csv`.
+
+### `init` — write a starter config
+
+Creates a config watching the user folders that exist in your home
+directory (Desktop, Documents, Downloads, …) with `dry_run: true` already
+set. Refuses to overwrite unless `--force`; `--output PATH` picks where to
+write. The `CONFIG` argument doubles as the output path when `--output` is
+omitted.
+
+### Environment variables
+
+| Variable | Effect |
+| --- | --- |
+| `FSORG_DRY_RUN` | `1`/`true`/`yes`/`on` forces preview mode for this process (overrides the config file; `0`/`false` forces real moves). |
+| `FSORG_TARGET_ROOT` | Redirects `target_root` for this process only. |
+| `OPENAI_API_KEY` | API key for the `openai` AI provider (see `ai.api_key`). |
+
 ## Web dashboard
 
 Run `python -m fs_organizer config.json --ui` and open http://127.0.0.1:8765.
@@ -169,9 +270,7 @@ The dashboard shows:
 - **Status** — target root, stability window, dry-run badge, AI fallback summary.
 - **Watched folders** and the **rule table** (category → extensions).
 - **Recent activity** — every moved / skipped / dry-run decision the watcher makes, live. Events carry a gap-free monotonic `seq`; the UI detects a ring-buffer wrap or counter reset and re-syncs from a full snapshot, so incremental polling never misses or duplicates events.
-- **Plan preview** — every candidate with its deciding category (the rule/AI
-  category, never a path-derived lookalike like the `YYYY-MM` folder) and its
-  template-rendered destination.
+- **Duplicates** — report-only groups of identical files (SHA-256) under the watch folders, with the oldest copy marked. Nothing is moved or deleted.
 - **Files by date** — every organized file grouped by its creation date (newest day
   first), with **month/year navigation** (dropdown + ‹ › steppers), per-day summaries
   (file count, total size, per-category breakdown), per-file sizes in human-readable
@@ -180,15 +279,28 @@ The dashboard shows:
 - **Controls** — **Organize now** (one-shot scan), **Pause/Resume** (holds
   incoming events while paused — bounded by the debouncer — and dispatches
   them on resume), **Reload config** (re-reads the config file live; a
-  rejected reload keeps the old config active and reverts the watches), and
-  the single-instance indicator.
+  rejected reload keeps the old config active and reverts the watches),
+  **Undo last** (restores the most recent move from the journal — the
+  button surfaces the server's reason when the journal is disabled),
+  **Export** (downloads the move journal as CSV), and the single-instance
+  indicator.
+- **File filter** — a debounced search box on the Files card narrows the
+  list by name or category, client-side (no extra server scan; day headers
+  reflect the visible rows while filtering).
 
 It binds to `127.0.0.1` only (never exposed to the network), and its mutating
-endpoints (`POST /api/once`, `/api/pause`, `/api/reload`) require a
+endpoints (`POST /api/once`, `/api/pause`, `/api/reload`, `/api/undo`) require a
 per-process random token that is injected into the served page. The read-only
 `GET` endpoints expose only paths and metadata under your configured
-watch/target folders. No extra dependencies — just the standard library. An
+watch/target folders (`GET /api/export` included). No extra dependencies —
+just the standard library. An
 end-to-end check lives at `scripts/smoke_ui.py`.
+
+`/api/status` is polled every 2 seconds and stays deliberately cheap: it
+returns config, counters, and pause state only. The plan preview (every
+candidate with its deciding category and template-rendered destination) walks
+every watch folder, so it is served on demand at `GET /api/plan` instead of
+on every poll.
 
 ## How it works
 
