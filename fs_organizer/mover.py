@@ -54,7 +54,13 @@ logger = logging.getLogger("fs_organizer")
 # Without this, two workers moving same-named files from different watch
 # folders can both pass the "is the name free?" check and the second
 # shutil.move silently overwrites the first (verified data loss).
-_dir_locks: dict[Path, threading.Lock] = {}
+#
+# Keyed by the NORMALIZED path string, never the raw Path: Windows hands
+# back the extended-path form (\\?\C:\...) from resolve() intermittently,
+# depending on what exists at resolve time. Keyed by the raw Path, one
+# directory could therefore take two different locks and the guard would
+# not actually guard (flaw #51 - reproducible data loss).
+_dir_locks: dict[str, threading.Lock] = {}
 _dir_locks_guard = threading.Lock()
 
 # Compound extensions kept whole when collision-suffixing: "a.tar.gz" becomes
@@ -63,11 +69,18 @@ _COMPOUND_SUFFIXES = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst", ".tar.lzma")
 
 
 def _lock_for(directory: Path) -> threading.Lock:
+    """The one lock that guards *directory*.
+
+    All spellings of the same directory (plain, extended ``\\?\\``, different
+    casing) must return the SAME lock object, or the check-then-move
+    sequence is not mutually exclusive (flaw #51).
+    """
+    key = _normalize_for_compare(directory)
     with _dir_locks_guard:
-        lock = _dir_locks.get(directory)
+        lock = _dir_locks.get(key)
         if lock is None:
             lock = threading.Lock()
-            _dir_locks[directory] = lock
+            _dir_locks[key] = lock
         return lock
 
 
@@ -573,6 +586,9 @@ def move_file(path: Path, category: str, config: Config) -> MoveResult:
             return MoveResult(skipped=True, reason="outside age policy")
 
         dest_dir = destination_for(path, category, config)
+        # Containment is checked BEFORE the directory exists (the traversal
+        # guard must run before we create anything). The lock key is resolved
+        # again after mkdir, so canonicalization sees the final directory.
         resolved_dest_dir = dest_dir.resolve()
         target_root = config.resolved_target_root()
         # Category names come from config; refuse to let one escape the
@@ -607,8 +623,9 @@ def move_file(path: Path, category: str, config: Config) -> MoveResult:
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Check-then-move must be atomic against other workers: the lock
         # closes the race where both pass the existence check and the
-        # second move silently overwrites the first.
-        with _lock_for(resolved_dest_dir):
+        # second move silently overwrites the first. Resolved AFTER mkdir so
+        # every worker keys the same canonical path (see flaw #51).
+        with _lock_for(dest_dir.resolve()):
             final = _unique_destination(dest)
             size = path.stat().st_size  # before the move: source may be gone
             if _same_volume(path, final):

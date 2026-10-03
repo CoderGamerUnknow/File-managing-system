@@ -178,3 +178,13 @@ markup is the only exception, and it must be assembled explicitly (flaw
     input (`count` is an int clamped to 0–500), and a 409 with a clear
     message when prerequisites (journal) are missing. `GET /api/export` is
     read-only like every other GET and therefore tokenless.
+21. The per-destination move lock (`mover._lock_for`) is keyed by the
+    NORMALIZED path string, never by a `Path` object: Windows `resolve()`
+    intermittently returns the extended-path form (`\\?\`) for the same
+    directory depending on what exists at resolve time, and two spellings of
+    one directory with two locks is not a lock — the check-then-move
+    sequence then silently overwrites files while every call reports
+    `moved=True` (flaw #51, verified ~60% of 8-thread runs on Windows).
+    `move_file` also re-resolves the destination after `mkdir` so all workers
+    key the same canonical path, and every other lock consumer (undo,
+    quarantine) must keep going through `_lock_for` so they share the key.

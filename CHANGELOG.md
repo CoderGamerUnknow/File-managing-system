@@ -4,6 +4,50 @@ All notable changes to fs-organizer are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Concurrent same-name moves could silently overwrite a file** (flaw #51).
+  The per-destination-directory lock — the guard that makes the
+  check-then-move sequence safe against two workers (flaw #1) — was keyed
+  by the raw `Path` object. Windows `Path.resolve()` intermittently returns
+  the extended-path form (`\\?\C:\...`) depending on what exists at resolve
+  time, so one destination directory could end up with **two different lock
+  objects**: the worker that resolved before the directory existed and the
+  worker that resolved after took different locks, both passed the "is this
+  name free?" check, and `shutil.move`'s `os.rename` replaced the first
+  file. Reproduced on Windows in ~60% of 8-thread runs: only 6–7 of 8
+  same-named files survived while **every call still reported
+  `moved=True`**. The lock map is now keyed by the normalized path string
+  (the same `_normalize_for_compare` canonicalization the containment guard
+  uses, which already strips the `\\?\` prefix), and `move_file` resolves the
+  destination again *after* `mkdir` so every worker keys the same canonical
+  path. Verified with 12/12 clean 8-thread stress runs after the fix. The
+  pre-fix and post-fix versions both pass the ordinary suite — only a
+  concurrent test exposes this.
+
+### Testing
+
+- New `tests/test_mover_properties.py`: property-based tests for the
+  mover's safety invariants — no-overwrite under collisions, destination
+  containment for arbitrary category strings, the loop guard at the
+  organizer, dry-run immutability, ignore/age-policy decisions, and
+  "never raises" for pathological inputs — each driven by a deterministic
+  seeded generator (so failures reproduce) plus optional deeper
+  hypothesis-generated variants when `hypothesis` is installed. Hypothesis is
+  deliberately NOT a project dependency: those four generated tests are
+  dormant (reported as a skip) until someone installs it, so CI exercises the
+  seeded properties only. Alongside
+  them, fault-injection tests attack the failure paths directly: a copy that
+  dies half-way, a rename that fails, an fsync that fails, a source delete
+  that fails after the commit, a WinError 32 lock, an uncreatable
+  destination directory, an unwritable journal, and the 8-thread same-name
+  race.
+- New `TestFlaw51DestinationLockKey` in `tests/test_flaw_regressions.py`:
+  deterministic (thread-free) regression tests pinning the lock-key
+  canonicalization, including the plain vs `\\?\` spelling case.
+
 ## [0.4.0] — 2026-10-03
 
 The safety-valve + control release: undo, quarantine-based duplicate

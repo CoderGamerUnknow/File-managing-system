@@ -6,6 +6,7 @@ mover/watcher/pool/rules/config/ai/__main__/journal.
 """
 import json
 import logging
+import os
 import shutil
 import sys
 import threading
@@ -2402,3 +2403,39 @@ class TestFlaw50WatchDiagCli:
         assert rc == 0
         payload = json.loads(capsys.readouterr().out)
         assert payload["files"][str(watch.resolve())]["would_organize"] == 1
+
+
+# ---------------------------------------------------------------- flaw #51
+class TestFlaw51DestinationLockKey:
+    """flaw #51: the destination lock was keyed by the raw ``Path``.
+
+    Windows ``resolve()`` intermittently returns the extended-path form
+    (``\\\\?\\C:\\...``) depending on what exists at resolve time. Keying
+    the per-directory lock map by the Path object therefore let ONE
+    destination hold TWO different locks: two workers could both pass the
+    "is this name free?" check and the second ``shutil.move`` silently
+    replaced the first (verified data loss in ~60% of 8-thread runs).
+    The map is now keyed by the normalized path string, so every spelling
+    of a directory shares one lock. The concurrent end-to-end version of
+    this regression lives in tests/test_mover_properties.py.
+    """
+
+    def test_locks_are_keyed_by_normalized_strings(self, tmp_path):
+        from fs_organizer.mover import _dir_locks, _lock_for
+
+        _lock_for(tmp_path / "out" / "Documents")
+        assert all(isinstance(key, str) for key in _dir_locks)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows extended-path form")
+    def test_same_lock_for_every_path_spelling(self, tmp_path):
+        from fs_organizer.mover import _lock_for
+
+        plain = tmp_path / "out" / "Documents"
+        extended = Path("\\\\?\\" + str(plain))
+        assert str(extended).startswith("\\\\?\\")
+        assert _lock_for(plain) is _lock_for(extended)
+
+    def test_distinct_directories_get_distinct_locks(self, tmp_path):
+        from fs_organizer.mover import _lock_for
+
+        assert _lock_for(tmp_path / "a") is not _lock_for(tmp_path / "b")
