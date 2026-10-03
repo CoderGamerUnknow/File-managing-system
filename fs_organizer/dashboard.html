@@ -54,6 +54,10 @@
   #files-list th:last-child, #files-list td:last-child { text-align: right; }
   select { background: var(--panel2); color: var(--text); border: 1px solid #26304a;
            border-radius: 6px; padding: 5px 8px; }
+  input[type="search"] { background: var(--panel2); color: var(--text);
+           border: 1px solid #26304a; border-radius: 6px; padding: 5px 8px;
+           font: inherit; }
+  input[type="search"]::placeholder { color: var(--muted); }
   .ev { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid #1d2740;
         font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; }
   .ev .t { color: var(--muted); flex: 0 0 62px; }
@@ -65,6 +69,12 @@
   .ev .n { flex: 1; word-break: break-all; }
   .ev .d { color: var(--muted); word-break: break-all; }
   .muted { color: var(--muted); }
+  .dup-group { margin-bottom: 10px; }
+  .dup-head { font-weight: 700; padding: 5px 8px; background: var(--panel2);
+              border-radius: 6px; font-size: 12.5px; }
+  .dup-group ul { margin: 2px 0 0 8px; }
+  .dup-group li { word-break: break-all; }
+  .dup-group .orig { color: var(--ok); }
   #scan-status { font-size: 12.5px; }
   @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
 </style>
@@ -77,6 +87,8 @@
   <span id="scan-status" class="muted"></span>
   <button id="pause-btn" class="ghost">Pause</button>
   <button id="reload-btn" class="ghost" title="Re-read the config file without restarting">Reload config</button>
+  <button id="export-btn" class="ghost" title="Download the move journal as CSV">Export</button>
+  <button id="undo-btn" class="ghost" title="Move the most recently organized file back to where it came from (never overwrites)">Undo last</button>
   <button id="scan-btn">Organize now</button>
 </header>
 <div id="stats-bar" class="statsbar">
@@ -109,6 +121,11 @@
     <div id="events"><div class="muted">Waiting for activity&hellip;</div></div>
   </div>
   <div class="card wide">
+    <h2>Duplicates <span class="muted">(report only — nothing is moved or deleted)</span></h2>
+    <div id="dupes-loading" class="muted">Scanning for duplicates&hellip;</div>
+    <div id="dupes-list"></div>
+  </div>
+  <div class="card wide">
     <h2>Files by date <span class="muted" id="files-meta"></span></h2>
     <div id="files-loading" class="muted">Loading files&hellip;</div>
     <div id="files-error" style="color: var(--err); display:none"></div>
@@ -117,6 +134,8 @@
       <select id="month-select" style="min-width:180px"></select>
       <button id="month-next" class="ghost" title="Next month">&rsaquo;</button>
       <button id="month-all" class="ghost">All months</button>
+      <input id="file-filter" type="search" placeholder="Filter name or category&hellip;"
+             style="min-width:180px" aria-label="Filter files">
       <span style="flex:1"></span>
       <label for="sort" class="muted">Sort:</label>
       <select id="sort">
@@ -137,6 +156,7 @@ const TOKEN = "__TOKEN__";
 const $ = (sel) => document.querySelector(sel);
 let SORT = "created-desc";
 let MONTH = "all";   // "all" or "YYYY-MM"
+let FILTER = "";     // substring filter over file name + category
 let MONTHS = [];
 let SUMMARY = {};
 let FILE_GROUPS = [];
@@ -221,18 +241,30 @@ function renderMonthSelect() {
 function renderFiles() {
   const list = $("#files-list");
   const meta = $("#files-meta");
+  const q = FILTER.trim().toLowerCase();
+  const match = (f) => !q
+    || f.name.toLowerCase().includes(q)
+    || String(f.category || "").toLowerCase().includes(q);
   const shown = MONTH === "all"
     ? FILE_GROUPS : FILE_GROUPS.filter(([d]) => d.startsWith(MONTH + "-"));
-  if (!shown.length) {
-    list.innerHTML = `<div class="muted">${FILE_GROUPS.length
-      ? "No files in this month."
-      : "No organized files yet — the target root is empty."}</div>`;
+  const visible = shown
+    .map(([date, files]) => [date, files.filter(match)])
+    .filter(([, files]) => files.length);
+  if (!visible.length) {
+    list.innerHTML = `<div class="muted">${!FILE_GROUPS.length
+      ? "No organized files yet — the target root is empty."
+      : q ? "No files match this filter."
+      : "No files in this month."}</div>`;
     meta.textContent = "";
     return;
   }
-  const parts = shown.map(([date, files]) => {
+  const parts = visible.map(([date, files]) => {
     const s = SUMMARY[date] || { count: files.length, bytes: 0, categories: {} };
-    const cats = Object.entries(s.categories).map(([c, n]) =>
+    // Under an active filter the server-side day totals would overstate what
+    // is on screen, so the header reflects the visible rows instead.
+    const count = q ? files.length : s.count;
+    const bytes = q ? files.reduce((n, f) => n + (f.size || 0), 0) : s.bytes;
+    const cats = q ? "" : Object.entries(s.categories || {}).map(([c, n]) =>
       `${escapeHtml(c)}: ${n}`).join(" · ");
     const sorted = files.slice().sort((a, b) => {
       if (SORT === "name-asc") return a.name.localeCompare(b.name);
@@ -247,15 +279,20 @@ function renderFiles() {
     </tr>`).join("");
     return `<div class="date-group">
       <div class="date-head">${date}
-        <span class="muted">· ${s.count} file(s) · ${fmtSize(s.bytes)}${cats ? " · " + cats : ""}</span>
+        <span class="muted">· ${count} file(s) · ${fmtSize(bytes)}${cats ? " · " + cats : ""}</span>
       </div>
       <table><tbody>${rows}</tbody></table>
     </div>`;
   });
   list.innerHTML = parts.join("");
-  meta.textContent = MONTH === "all"
-    ? `· ${FILE_TOTAL} file(s)`
-    : `· ${shown.reduce((n, [, fs]) => n + fs.length, 0)} of ${FILE_TOTAL} file(s)`;
+  if (q) {
+    const matched = visible.reduce((n, [, fs]) => n + fs.length, 0);
+    meta.textContent = `· ${matched} matching of ${FILE_TOTAL} file(s)`;
+  } else {
+    meta.textContent = MONTH === "all"
+      ? `· ${FILE_TOTAL} file(s)`
+      : `· ${shown.reduce((n, [, fs]) => n + fs.length, 0)} of ${FILE_TOTAL} file(s)`;
+  }
 }
 
 async function loadFiles() {
@@ -293,6 +330,36 @@ function stepMonth(dir) {
   renderMonthSelect();
   renderFiles();
 }
+async function loadDupes() {
+  // Duplicates are report-only; the payload carries no mutation endpoint.
+  const loading = $("#dupes-loading");
+  const list = $("#dupes-list");
+  try {
+    const data = await api("/api/dupes");
+    loading.style.display = "none";
+    if (!data.duplicate_groups || !data.duplicate_groups.length) {
+      list.innerHTML = `<div class="muted">${data.truncated
+        ? "No duplicates found in the scanned range (scan truncated)."
+        : "No duplicates found."}</div>`;
+      return;
+    }
+    const parts = data.duplicate_groups.map(g => {
+      const rows = g.files.map((f, i) =>
+        `<li${i === 0 ? ` class="orig" title="oldest copy"` : ""}>${escapeHtml(f.path)}</li>`).join("");
+      return `<div class="dup-group">
+        <div class="dup-head">${fmtSize(g.size)} &times; ${g.files.length}
+          <span class="muted">sha256 ${escapeHtml(g.hash.slice(0, 12))}&hellip;</span></div>
+        <ul>${rows}</ul>
+      </div>`;
+    }).join("");
+    const tail = data.truncated ? `<div class="muted">Scan truncated — more duplicates may exist.</div>` : "";
+    list.innerHTML = parts + tail;
+  } catch (e) {
+    loading.style.display = "none";
+    list.innerHTML = `<div class="muted">Could not scan for duplicates: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 function whenReady(fn) {
   // The script sits at the end of <body>, but an embedded/fast browser can
   // still run it before the header elements are parsed — and then every
@@ -330,14 +397,23 @@ function renderStatus(s) {
   else { badge.textContent = "LIVE"; badge.className = "badge live"; }
   const ai = s.ai.enabled
     ? s.ai.provider + " (" + s.ai.model + ")" : "off";
-  $("#status").innerHTML = [
-    ["Target root", s.target_root],
-    ["Stability window", s.file_stable_seconds + " s"],
-    ["Date subfolders", s.use_date_subfolders ? "on" : "off"],
-    ["Recursive scope", s.recursive ? "on (subfolders watched)" : "off (top level only)"],
-    ["AI fallback", ai],
-    ["Ignore patterns", s.ignore_patterns.length + " patterns"],
-  ].map(([k, v]) => `<div class="k">${k}</div><div>${escapeHtml(String(v))}</div>`).join("");
+  const subRules = (s.sub_rules || []).map(r =>
+    `${escapeHtml(r.extensions.join(" "))} in ${escapeHtml(r.pattern)} &rarr; ${escapeHtml(r.category)}`);
+  // Each value is either plain text (escaped here) or pre-escaped markup
+  // (ai / subRules), so no config-supplied string can inject HTML. The
+  // target root and sub-rule patterns are user-controlled config values —
+  // escaping them is what keeps invariant 7 true (flaw #49).
+  const rows = [
+    ["Target root", escapeHtml(s.target_root)],
+    ["Stability window", escapeHtml(s.file_stable_seconds + " s")],
+    ["Date subfolders", escapeHtml(s.use_date_subfolders ? "on" : "off")],
+    ["Recursive scope", escapeHtml(s.recursive ? "on (subfolders watched)" : "off (top level only)")],
+    ["AI fallback", escapeHtml(ai)],
+    ["Sub-rules", subRules.length ? subRules.join("<br>") : "none"],
+    ["Ignore patterns", escapeHtml(s.ignore_patterns.length + " patterns")],
+  ];
+  $("#status").innerHTML = rows
+    .map(([k, v]) => `<div class="k">${k}</div><div>${v}</div>`).join("");
   $("#folders").innerHTML = s.watch_folders.map(f => `<li>${escapeHtml(f)}</li>`).join("");
   const tbody = $("#rules").querySelector("tbody");
   tbody.innerHTML = Object.entries(s.categories).map(([cat, exts]) =>
@@ -427,10 +503,52 @@ whenReady(() => {
     renderFiles();
   });
 
+  let filterTimer = null;
+  $("#file-filter").addEventListener("input", (e) => {
+    // Debounced: the payload caps at 2000 files, and re-rendering that on
+    // every keystroke would still be wasted work on a low-resource daemon.
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+      FILTER = e.target.value;
+      renderFiles();
+    }, 150);
+  });
+
+  $("#export-btn").addEventListener("click", () => {
+    // Plain GET download: the endpoint is read-only and loopback-only.
+    window.location.href = "/api/export?format=csv";
+  });
+
+  $("#undo-btn").addEventListener("click", async () => {
+    $("#undo-btn").disabled = true;
+    try {
+      const res = await fetch("/api/undo", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Auth-Token": TOKEN},
+        body: JSON.stringify({action: "undo", count: 1}),
+      });
+      // Read the body directly so a 409 (journal disabled) shows its reason
+      // instead of the generic failure path.
+      const data = await res.json().catch(() => ({}));
+      $("#scan-status").textContent = !res.ok
+        ? (data.message || "Undo failed")
+        : data.restored ? `Restored ${data.restored} file(s)`
+        : "Nothing to undo";
+      if (res.ok && data.restored) {
+        loadFiles();  // the restored file left the target root
+        refresh();
+      }
+    } catch (e) {
+      $("#scan-status").textContent = "Undo failed";
+    }
+    $("#undo-btn").disabled = false;
+  });
+
   refresh();
   setInterval(refresh, 2000);
   loadFiles();
   setInterval(loadFiles, 10000);
+  loadDupes();
 });
 </script>
 </body>

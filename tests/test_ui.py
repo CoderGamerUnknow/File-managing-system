@@ -1,19 +1,17 @@
 """Tests for the local web dashboard (fs_organizer.ui)."""
 import json
-import threading
 import time
 import urllib.request
-from pathlib import Path
 
 import pytest
 
+from fs_organizer import journal
+from fs_organizer.config import JournalConfig
 from fs_organizer.ui import (
     ActivityLog,
     Dashboard,
-    DashboardState,
     status_payload,
 )
-
 from helpers import make_config as _make_config
 
 
@@ -330,7 +328,7 @@ class TestFilesPayload:
                 urllib.request.urlopen(dash.url + "api/files", timeout=5).read()
             )
             assert data["total"] == 1
-            day = list(data["groups"])[0]
+            day = next(iter(data["groups"]))
             assert data["groups"][day][0]["name"] == "a.txt"
             # The served page must reference the new card and endpoint.
             html = urllib.request.urlopen(dash.url, timeout=5).read().decode("utf-8")
@@ -445,3 +443,257 @@ class TestWatcherActivityFeed:
         assert watcher.organizer.activity is activity
         watcher.start()
         watcher.stop()  # full start/stop cycle must work with the feed attached
+
+
+class TestDashboardEscaping:
+    """Invariant 7: the dashboard must escape user-influenced strings
+    before rendering. renderStatus() interpolated ${v} raw, so a config
+    value like an <img onerror=...> target root executed script (flaw #49)."""
+
+    def _page(self, tmp_path, **overrides):
+        cfg = make_config(tmp_path)
+        for key, value in overrides.items():
+            setattr(cfg, key, value)
+        dash = Dashboard(cfg, port=0, open_browser=False)
+        dash.start()
+        try:
+            with urllib.request.urlopen(dash.url, timeout=10) as resp:
+                return resp.read().decode("utf-8")
+        finally:
+            dash.stop()
+
+    def test_status_rows_escape_config_values(self, tmp_path):
+        page = self._page(tmp_path, target_root="<img src=x onerror=alert(1)>")
+        # Every config-derived value rendered into #status must pass through
+        # escapeHtml() at the point of interpolation.
+        for needle in (
+            "escapeHtml(s.target_root)",
+            "escapeHtml(s.file_stable_seconds",
+            "escapeHtml(s.use_date_subfolders",
+            "escapeHtml(s.recursive",
+            "escapeHtml(ai)",
+            "escapeHtml(s.ignore_patterns.length",
+        ):
+            assert needle in page, f"status row value is not escaped: {needle}"
+        # ${v} is still the render loop's placeholder, but its ONLY source is
+        # the `rows` array built above — every element of which is escaped (or
+        # pre-escaped markup for ai/subRules). A row entry built from a bare
+        # config value would reintroduce the injection, so assert the rows
+        # array is the sole supplier.
+        assert page.count("${v}") == 1, (
+            "unexpected number of ${v} interpolations in the dashboard"
+        )
+        assert "const rows = [" in page, (
+            "status rows must be assembled (escaped) before interpolation"
+        )
+
+    def test_sub_rule_pattern_and_category_are_escaped(self, tmp_path):
+        from fs_organizer.config import SubRule
+
+        cfg = make_config(tmp_path)
+        cfg.sub_rules = [
+            SubRule(pattern="<b>x</b>", extensions=["<i>.pdf</i>"], category="<s>c</s>")
+        ]
+        dash = Dashboard(cfg, port=0, open_browser=False)
+        dash.start()
+        try:
+            with urllib.request.urlopen(dash.url, timeout=10) as resp:
+                page = resp.read().decode("utf-8")
+        finally:
+            dash.stop()
+        assert "escapeHtml(r.pattern)" in page
+        assert "escapeHtml(r.extensions.join" in page
+        assert "escapeHtml(r.category)" in page
+
+    def test_file_and_event_names_stay_escaped(self, tmp_path):
+        """The pre-existing escaping for names must not regress."""
+        page = self._page(tmp_path)
+        for needle in (
+            "escapeHtml(f.name)",
+            "escapeHtml(f.category",
+            "escapeHtml(e.name)",
+            "escapeHtml(e.detail)",
+            "escapeHtml(g.hash",
+            "escapeHtml(f.path)",
+        ):
+            assert needle in page, f"lost escaping for {needle}"
+
+
+class TestUndoAndExportEndpoints:
+    """V3 dashboard endpoints: journal export download + token-gated undo."""
+
+    def _dash(self, tmp_path, journal_enabled=True):
+        cfg = make_config(tmp_path)
+        if journal_enabled:
+            cfg.journal = JournalConfig(
+                enabled=True, path=str(tmp_path / "moves.jsonl")
+            )
+        dash = Dashboard(cfg, port=free_port(), open_browser=False)
+        return cfg, dash
+
+    @staticmethod
+    def _post(dash, path, body, with_token=True):
+        headers = {"Content-Type": "application/json"}
+        if with_token:
+            headers["X-Auth-Token"] = dash.state.token
+        req = urllib.request.Request(
+            dash.url + path,
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            resp = urllib.request.urlopen(req, timeout=5)
+            return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read() or b"{}")
+
+    def _seed_move(self, cfg, tmp_path):
+        """Simulate one organized move: dest file exists + journal entry."""
+        src = tmp_path / "watch" / "a.txt"
+        dest = tmp_path / "out" / "Documents" / "a.txt"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text("payload", encoding="utf-8")
+        journal.append_move(cfg, src, dest, 7, "Documents")
+        return src, dest
+
+    # -- export ----------------------------------------------------------
+
+    def test_export_csv_download(self, tmp_path):
+        cfg, dash = self._dash(tmp_path)
+        self._seed_move(cfg, tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            resp = urllib.request.urlopen(dash.url + "api/export?format=csv", timeout=5)
+            assert resp.status == 200
+            assert resp.headers["Content-Type"].startswith("text/csv")
+            assert 'attachment; filename="moves.csv"' in resp.headers["Content-Disposition"]
+            lines = resp.read().decode("utf-8").strip().splitlines()
+            assert lines[0] == "ts,ts_iso,src,dest,category,size"
+            assert len(lines) == 2
+            assert str(tmp_path / "watch" / "a.txt") in lines[1]
+        finally:
+            dash.stop()
+
+    def test_export_json_download(self, tmp_path):
+        cfg, dash = self._dash(tmp_path)
+        self._seed_move(cfg, tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            resp = urllib.request.urlopen(dash.url + "api/export?format=json", timeout=5)
+            rows = json.loads(resp.read())
+            assert len(rows) == 1
+            assert rows[0]["category"] == "Documents"
+            assert "json" in resp.headers["Content-Type"]
+        finally:
+            dash.stop()
+
+    def test_export_rejects_bad_format(self, tmp_path):
+        _cfg, dash = self._dash(tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                urllib.request.urlopen(dash.url + "api/export?format=xml", timeout=5)
+            assert exc_info.value.code == 400
+        finally:
+            dash.stop()
+
+    def test_export_disabled_journal_is_header_only(self, tmp_path):
+        _cfg, dash = self._dash(tmp_path, journal_enabled=False)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            body = urllib.request.urlopen(
+                dash.url + "api/export?format=csv", timeout=5
+            ).read().decode("utf-8")
+            assert body.strip().splitlines() == ["ts,ts_iso,src,dest,category,size"]
+        finally:
+            dash.stop()
+
+    # -- undo ------------------------------------------------------------
+
+    def test_undo_requires_token(self, tmp_path):
+        _cfg, dash = self._dash(tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            status, data = self._post(
+                dash, "api/undo", {"action": "undo", "count": 1}, with_token=False
+            )
+            assert status == 401
+            assert data["error"] == "unauthorized"
+        finally:
+            dash.stop()
+
+    def test_undo_restores_file_with_token(self, tmp_path):
+        cfg, dash = self._dash(tmp_path)
+        src, dest = self._seed_move(cfg, tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            status, data = self._post(dash, "api/undo", {"action": "undo", "count": 1})
+            assert status == 200
+            assert data["ok"] is True
+            assert data["restored"] == 1
+            assert src.read_text(encoding="utf-8") == "payload"
+            assert not dest.exists()
+        finally:
+            dash.stop()
+
+    def test_undo_dry_run_flag_moves_nothing(self, tmp_path):
+        cfg, dash = self._dash(tmp_path)
+        src, dest = self._seed_move(cfg, tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            status, data = self._post(
+                dash, "api/undo", {"action": "undo", "count": 1, "dry_run": True}
+            )
+            assert status == 200
+            assert data["would_restore"] == 1
+            assert dest.exists() and not src.exists()
+        finally:
+            dash.stop()
+
+    def test_undo_journal_disabled_conflicts(self, tmp_path):
+        _cfg, dash = self._dash(tmp_path, journal_enabled=False)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            status, data = self._post(dash, "api/undo", {"action": "undo"})
+            assert status == 409
+            assert "Journal is disabled" in data["message"]
+        finally:
+            dash.stop()
+
+    @pytest.mark.parametrize("count", [9999, -1, "abc", True, 1.5])
+    def test_undo_rejects_bad_count(self, tmp_path, count):
+        _cfg, dash = self._dash(tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            status, data = self._post(dash, "api/undo", {"action": "undo", "count": count})
+            assert status == 400
+            assert data["ok"] is False
+        finally:
+            dash.stop()
+
+    # -- page affordances ------------------------------------------------
+
+    def test_page_has_undo_export_and_filter_controls(self, tmp_path):
+        _cfg, dash = self._dash(tmp_path)
+        dash.start()
+        _wait_for_server(dash.url)
+        try:
+            page = urllib.request.urlopen(dash.url, timeout=5).read().decode("utf-8")
+            assert 'id="undo-btn"' in page
+            assert 'id="export-btn"' in page
+            assert 'id="file-filter"' in page
+            assert "/api/export?format=csv" in page
+            # The undo POST must carry the per-process token.
+            assert '"X-Auth-Token": TOKEN' in page
+        finally:
+            dash.stop()

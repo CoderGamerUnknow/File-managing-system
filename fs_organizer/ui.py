@@ -219,7 +219,7 @@ class DashboardState:
             with self._oneshot_lock:
                 self.oneshot_result = {"status": "done", "moved": moved, "error": None}
             self.activity.add("info", "(scan)", "Manual scan finished")
-        except Exception as exc:  # noqa: BLE001 - the dashboard must survive anything
+        except Exception as exc:
             logger.exception("Manual one-shot scan failed")
             with self._oneshot_lock:
                 self.oneshot_result = {"status": "error", "moved": 0, "error": str(exc)}
@@ -264,7 +264,7 @@ class DashboardState:
         if self.watcher is not None:
             try:
                 self.watcher.apply_config(new_config)
-            except Exception as exc:  # noqa: BLE001 - never kill the daemon
+            except Exception as exc:
                 logger.exception("apply_config failed; reverting")
                 self.config = old
                 applied = False
@@ -273,7 +273,7 @@ class DashboardState:
         if self.on_reload is not None and applied:
             try:
                 self.on_reload(new_config)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 logger.exception("on_reload callback failed")
         if applied:
             self.activity.add("info", "(reload)", detail)
@@ -327,9 +327,14 @@ def make_handler(state: DashboardState):
             elif path == "/api/status":
                 payload = status_payload(state.config)
                 payload["oneshot"] = dict(state.oneshot_result)
-                payload["plan"] = plan_summary(state.config)
                 payload["stats"] = state.activity.stats_snapshot()
                 payload["paused"] = state.watcher.paused if state.watcher else False
+                # NOTE: the plan summary is deliberately NOT part of
+                # /api/status. plan_summary() walks every watch folder
+                # (bounded at 2000 files) and the dashboard polls this
+                # endpoint every 2s — that turned an idle dashboard into a
+                # continuous full-tree scan, against the low-resource-daemon
+                # invariant. The plan is available on demand at /api/plan.
                 self._send_json(payload)
             elif path == "/api/rules":
                 # Read-only config summary: every rule, the effective
@@ -354,6 +359,34 @@ def make_handler(state: DashboardState):
                 self._send_json(files_payload(state.config))
             elif path == "/api/plan":
                 self._send_json(plan_summary(state.config))
+            elif path == "/api/dupes":
+                # Report-only duplicate scan (bounded: size pre-filter, file
+                # cap, hashing budget). GET is safe to expose: it mutates
+                # nothing and returns only paths under the watch folders.
+                from .duplicates import find_duplicates
+
+                self._send_json(find_duplicates(state.config))
+            elif path == "/api/export":
+                # V3: download the move journal as CSV or JSON. Read-only
+                # GET (loopback-only like every route), so no token needed —
+                # a browser <a download> / location.href cannot send one.
+                values = parse_qs(urlsplit(self.path).query).get("format", ["csv"])
+                fmt = (values[0] if values else "csv").lower()
+                if fmt not in ("csv", "json"):
+                    self._send_json({"error": "format must be 'csv' or 'json'"}, status=400)
+                    return
+                from .journal import export_journal
+
+                body = export_journal(state.config, fmt=fmt).encode("utf-8")
+                self.send_response(200)
+                ctype = "text/csv" if fmt == "csv" else "application/json"
+                self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+                self.send_header("Content-Disposition", f'attachment; filename="moves.{fmt}"')
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(body)
             else:
                 self._send_json({"error": "not found"}, status=404)
 
@@ -362,7 +395,7 @@ def make_handler(state: DashboardState):
                 self._send_json({"error": "forbidden"}, status=403)
                 return
             path = self.path.split("?", 1)[0]
-            if path not in ("/api/once", "/api/pause", "/api/reload"):
+            if path not in ("/api/once", "/api/pause", "/api/reload", "/api/undo"):
                 self._send_json({"error": "not found"}, status=404)
                 return
             if not self._authed_post():
@@ -402,6 +435,56 @@ def make_handler(state: DashboardState):
                     {"ok": ok, "message": msg, "paused": state.watcher.paused if state.watcher else False},
                     status=200 if ok else 409,
                 )
+                return
+            if path == "/api/undo":
+                # V3: restore recent moves from the journal. Token-protected
+                # (it mutates), bounded by an explicit count, and refuses to
+                # run when the journal is disabled (there would be nothing to
+                # undo — fail loudly instead of silently doing nothing).
+                from dataclasses import replace as _replace
+
+                from .undo import undo as _run_undo
+
+                count = data.get("count", 1)
+                if (
+                    not isinstance(count, int)
+                    or isinstance(count, bool)
+                    or not (0 <= count <= 500)
+                ):
+                    self._send_json(
+                        {"ok": False, "message": "count must be an integer between 0 and 500"},
+                        status=400,
+                    )
+                    return
+                if not state.config.journal.enabled:
+                    self._send_json(
+                        {"ok": False,
+                         "message": "Journal is disabled — set journal.enabled to record moves"},
+                        status=409,
+                    )
+                    return
+                cfg = state.config
+                if data.get("dry_run"):
+                    cfg = _replace(cfg, dry_run=True)
+                results = _run_undo(cfg, count=count)
+                self._send_json({
+                    "ok": True,
+                    "restored": sum(r.moved for r in results),
+                    "would_restore": sum(r.would_move for r in results),
+                    "skipped": sum(r.skipped for r in results),
+                    "results": [
+                        {
+                            "src": str(r.src) if r.src else None,
+                            "dest": str(r.dest),
+                            "restored_to": str(r.restored_to) if r.restored_to else None,
+                            "moved": r.moved,
+                            "would_move": r.would_move,
+                            "skipped": r.skipped,
+                            "reason": r.reason,
+                        }
+                        for r in results
+                    ],
+                })
                 return
             # /api/reload
             ok, msg, payload = state.reload_config()
