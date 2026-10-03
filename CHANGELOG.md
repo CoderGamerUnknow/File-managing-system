@@ -4,7 +4,7 @@ All notable changes to fs-organizer are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] — Unreleased
+## [0.4.0] — 2026-10-03
 
 The safety-valve + control release: undo, quarantine-based duplicate
 cleanup, name-based and time-window rules, and a first pass at making the
@@ -311,5 +311,7 @@ wins precedence, bare-vs-slash and Windows-backslash patterns, agreement
 across the one-shot pass, `plan_actions`, and the live organizer, and the
 `~`-expansion, including the narrow guard that keeps `~scan.pdf` a file-NAME
 glob instead of a username).
+
+[0.4.0]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.4.0
 
 [0.3.1]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.3.1
