@@ -19,8 +19,7 @@ from fs_organizer.config import AIConfig, Config, ConfigError, JournalConfig, lo
 from fs_organizer.mover import move_file, plan_actions
 from fs_organizer.pool import Debouncer, WorkerPool
 from fs_organizer.rules import is_ignored
-from fs_organizer.watcher import Watcher, _EventHandler, Organizer
-
+from fs_organizer.watcher import Organizer, Watcher, _EventHandler
 from helpers import make_config
 
 
@@ -290,8 +289,8 @@ class TestFlaw7LoggingReconfiguration:
         assert handlers == []
 
     def test_pythonw_without_log_file_disables_logging(self, clean_root_logger, monkeypatch):
-        from fs_organizer.__main__ import _configure_logging
         import fs_organizer.__main__ as m
+        from fs_organizer.__main__ import _configure_logging
 
         monkeypatch.setattr(m.sys, "stderr", None)
         _configure_logging(verbose=False, log_file=None)
@@ -447,7 +446,7 @@ class TestFlaw14NonNegativeCoercion:
         assert _coerce_non_negative_number(0.0, "x") == 0.0
 
     def test_negative_rejected(self):
-        from fs_organizer.config import _coerce_non_negative_number, ConfigError
+        from fs_organizer.config import ConfigError, _coerce_non_negative_number
 
         with pytest.raises(ConfigError):
             _coerce_non_negative_number(-1, "x")
@@ -549,7 +548,7 @@ class TestFlaw18AIStringValidation:
             "ai": {"enabled": True, "provider": "ollama",
                    "base_url": 123, "allowed_subfolders": ["Documents"]},
         }), encoding="utf-8")
-        with pytest.raises(ConfigError, match="ai.base_url"):
+        with pytest.raises(ConfigError, match=r"ai\.base_url"):
             load_config(cfg)
 
     def test_non_string_model_rejected(self, tmp_path):
@@ -563,7 +562,7 @@ class TestFlaw18AIStringValidation:
             "ai": {"enabled": True, "provider": "ollama",
                    "model": ["llama"], "allowed_subfolders": ["Documents"]},
         }), encoding="utf-8")
-        with pytest.raises(ConfigError, match="ai.model"):
+        with pytest.raises(ConfigError, match=r"ai\.model"):
             load_config(cfg)
 
     def test_non_string_api_key_rejected(self, tmp_path):
@@ -576,7 +575,7 @@ class TestFlaw18AIStringValidation:
             "watch_folders": [str(watch)],
             "ai": {"enabled": True, "provider": "openai", "api_key": 7},
         }), encoding="utf-8")
-        with pytest.raises(ConfigError, match="ai.api_key"):
+        with pytest.raises(ConfigError, match=r"ai\.api_key"):
             load_config(cfg)
 
     def test_null_api_key_still_accepted(self, tmp_path):
@@ -822,8 +821,8 @@ class TestFlaw22TransientLockRetry:
 
     def test_locked_file_retried_then_moves(self, tmp_path, monkeypatch):
         """A locked file is re-scheduled (bounded) and moves once unlocked."""
-        from fs_organizer.mover import MoveResult
         import fs_organizer.watcher as watcher_mod
+        from fs_organizer.mover import MoveResult
 
         cfg = make_config(tmp_path)
         src = tmp_path / "watch" / "a.txt"
@@ -857,8 +856,8 @@ class TestFlaw22TransientLockRetry:
     def test_locked_file_gives_up_after_cap(self, tmp_path, monkeypatch):
         """After MAX_LOCK_RETRIES the file is left in place and the path is
         not re-armed forever (no retry storm from repeated events)."""
-        from fs_organizer.mover import MoveResult
         import fs_organizer.watcher as watcher_mod
+        from fs_organizer.mover import MoveResult
 
         cfg = make_config(tmp_path)
         src = tmp_path / "watch" / "a.txt"
@@ -888,8 +887,8 @@ class TestFlaw22TransientLockRetry:
 
     def test_success_clears_exhausted_state(self, tmp_path, monkeypatch):
         """A definitive outcome (move ok) must clear exhausted/sentinel state."""
-        from fs_organizer.mover import MoveResult
         import fs_organizer.watcher as watcher_mod
+        from fs_organizer.mover import MoveResult
 
         cfg = make_config(tmp_path)
         src = tmp_path / "watch" / "a.txt"
@@ -1054,7 +1053,6 @@ class TestFlaw27WatchDiagPerFolder:
     for every folder."""
 
     def test_counts_are_per_folder(self, tmp_path):
-        import json
 
         from fs_organizer.diagnostics import watch_diag as _watch_diag
 
@@ -1177,7 +1175,7 @@ class TestFlaw31AIErrorPrefixes:
         from fs_organizer.config import ConfigError
 
         (tmp_path / "watch").mkdir()
-        with pytest.raises(ConfigError, match="ai.base_url"):
+        with pytest.raises(ConfigError, match=r"ai\.base_url"):
             from fs_organizer.config import from_dict as _from_dict
 
             _from_dict({
@@ -1228,7 +1226,6 @@ class TestFlaw32ResolveFormStableGuard:
         """Even when resolve() hands back an extended-path dest, the move happens."""
         if sys.platform != "win32":
             pytest.skip("\\\\?\\ resolve() form is Windows-only")
-        import fs_organizer.mover as mover
 
         cfg = make_config(tmp_path)
         src = tmp_path / "watch" / "a.txt"
@@ -2180,7 +2177,8 @@ class TestFlaw44CheckReportMissingFolders:
     def test_matches_watch_diag_status(self, tmp_path):
         """Neither surface may list a missing folder as watched: check calls
         it out explicitly, watch-diag simply doesn't include it in files."""
-        from fs_organizer.diagnostics import check_report, watch_diag as _watch_diag
+        from fs_organizer.diagnostics import check_report
+        from fs_organizer.diagnostics import watch_diag as _watch_diag
 
         ghost = tmp_path / "ghost"
         cfg = make_config(tmp_path)
@@ -2207,7 +2205,7 @@ class TestFlaw45ActivityLogEventShape:
         log = ActivityLog()
         log.add("moved", "a.txt", "-> out")
         (event,) = log.snapshot()
-        assert self.REQUIRED_KEYS <= set(event)
+        assert set(event) >= self.REQUIRED_KEYS
 
     def test_events_after_ring_wrap_still_complete(self):
         from fs_organizer.ui import ActivityLog
@@ -2216,7 +2214,7 @@ class TestFlaw45ActivityLogEventShape:
         for i in range(10):
             log.add("moved", f"f{i}.txt")
         for event in log.snapshot():
-            assert self.REQUIRED_KEYS <= set(event)
+            assert set(event) >= self.REQUIRED_KEYS
 
 
 # ---------------------------------------------------------------- flaw #46
@@ -2270,3 +2268,137 @@ class TestFlaw46PlanStatRace:
         assert row["destination"] == cfg.resolved_target_root() / "Documents" / "a.txt"
         assert row["category"] == "Documents"
         assert row["size"] == stat.st_size
+
+
+class TestFlaw47ResumeHeldSwapRace:
+    """resume() swapped _held before clearing _paused, so a dispatch racing
+    the swap could insert into the fresh set and never be dispatched."""
+
+    def test_resume_under_contended_dispatch_dispatches_everything(self, tmp_path):
+        """Hammer pause/resume with dispatches in flight; no path may be
+        stranded in _held after the final resume."""
+        from fs_organizer.watcher import Watcher
+
+        cfg = make_config(tmp_path)
+        cfg.file_stable_seconds = 0.05
+        sources = []
+        for i in range(12):
+            p = tmp_path / "watch" / f"r{i}.txt"
+            p.write_text("x", encoding="utf-8")
+            sources.append(p)
+
+        watcher = Watcher(cfg)
+        watcher.start()
+        try:
+            for round_no in range(5):
+                watcher.pause()
+                for p in sources:
+                    watcher.debouncer.schedule(p)
+                time.sleep(0.2)  # debouncer fires -> _dispatch holds
+                watcher.resume()
+            # Whatever happened during the rounds, the final resume must
+            # leave nothing held.
+            watcher.pause()
+            time.sleep(0.2)
+            watcher.resume()
+            with watcher._pause_lock:
+                assert watcher._held == set(), "paths stranded in _held after resume"
+            deadline = time.monotonic() + 10
+            while any(p.exists() for p in sources) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            leftover = [p.name for p in sources if p.exists()]
+            assert not leftover, f"files stranded by the resume race: {leftover}"
+        finally:
+            watcher.stop()
+
+
+class TestFlaw48MalformedDateToken:
+    """An unterminated {date:...} token appended itself a second time,
+    producing a literal garbage folder name like '2025-12{date:%Y'."""
+
+    def test_unterminated_date_token_does_not_leak_literal_text(self):
+        """The malformed token must NOT be re-emitted after the date.
+
+        Before the fix, the unterminated branch used part[end + 1:] with
+        end == -1 (i.e. the whole segment), so the token appeared twice:
+        '2025-12{date:%Y'.
+        """
+        from fs_organizer.config import DestinationTemplate
+
+        rendered = DestinationTemplate(pattern="{category}/{date").render(
+            "Docs", 1767000000.0
+        )
+        assert rendered == "Docs/2025-12", f"malformed token leaked: {rendered}"
+        assert "{date" not in rendered
+
+    def test_unterminated_token_still_validates_and_renders(self, tmp_path):
+        """A pattern with an unterminated token must load (the format is the
+        user's call) and render to a safe date, never crash a move."""
+        from fs_organizer.config import from_dict
+
+        (tmp_path / "watch").mkdir()
+        cfg = from_dict({
+            "watch_folders": [str(tmp_path / "watch")],
+            "destination_template": {"pattern": "{category}/{date"},
+        })
+        rel = cfg.destination_template.render("Docs", 1767000000.0)
+        assert rel == "Docs/2025-12"
+        for segment in rel.split("/"):
+            assert segment and "{" not in segment and "}" not in segment
+
+    def test_well_formed_templates_are_unchanged(self):
+        from fs_organizer.config import DestinationTemplate
+
+        mtime = 1767000000.0  # 2025-12-01 UTC-ish
+        assert DestinationTemplate(pattern="{category}").render("Docs", mtime) == "Docs"
+        assert (
+            DestinationTemplate(pattern="{category}/{date:%Y-%m}").render("Docs", mtime)
+            == "Docs/2025-12"
+        )
+
+
+# ---------------------------------------------------------------- flaw #50
+class TestFlaw50WatchDiagCli:
+    """flaw #50: ``CONFIG watch-diag`` crashed with a NameError.
+
+    The ``_watch_diag`` name was never imported after the v0.3.1 change that
+    hoisted loop-local imports to module scope. Existing coverage called
+    ``diagnostics.watch_diag`` directly, so the broken CLI path was never
+    exercised — these tests go through ``main()`` on purpose.
+    """
+
+    def _write_cfg(self, tmp_path):
+        watch = tmp_path / "watch"
+        watch.mkdir(exist_ok=True)
+        (watch / "a.txt").write_text("x", encoding="utf-8")
+        data = {
+            "watch_folders": [str(watch)],
+            "target_rules": {".txt": "Documents"},
+            "ignore_patterns": ["*.tmp"],
+            "target_root": str(tmp_path / "out"),
+            "dry_run": False,
+            "file_stable_seconds": 0.1,
+            "ai": {"enabled": False},
+        }
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        return p, watch
+
+    def test_watch_diag_subcommand_runs(self, tmp_path, capsys):
+        from fs_organizer.__main__ import main
+
+        p, _watch = self._write_cfg(tmp_path)
+        rc = main([str(p), "watch-diag"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Watched folder:" in out
+        assert "would_organize: 1" in out
+
+    def test_watch_diag_json_subcommand_runs(self, tmp_path, capsys):
+        from fs_organizer.__main__ import main
+
+        p, watch = self._write_cfg(tmp_path)
+        rc = main([str(p), "watch-diag", "--json"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["files"][str(watch.resolve())]["would_organize"] == 1

@@ -14,6 +14,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import ai_cache
 from .config import AIConfig
 
 logger = logging.getLogger("fs_organizer")
@@ -127,6 +128,19 @@ def classify_with_ai(path: Path, config: AIConfig) -> str | None:
     if not config.enabled:
         return None
 
+    # V3: consult the persistent classification cache before paying for a
+    # model request. A cached hit is the same answer the model would give
+    # (the key hashes the exact preview window it sees).
+    cache: dict[str, str] = {}
+    key: str | None = None
+    if getattr(config, "cache_enabled", False):
+        cache = ai_cache.load(config.resolved_cache_path())
+        key = ai_cache.cache_key(path, config)
+        cached = ai_cache.get(cache, key)
+        if cached is not None:
+            logger.debug("AI cache hit for %s -> %s", path.name, cached)
+            return cached
+
     provider = config.provider
     try:
         if provider == "openai":
@@ -157,6 +171,10 @@ def classify_with_ai(path: Path, config: AIConfig) -> str | None:
     allowed = {c.strip().lower(): c.strip() for c in config.allowed_subfolders if c.strip()}
     canonical = allowed.get(raw.lower())
     if canonical:
+        # Only a successful, accepted answer is cached — a failure above was
+        # returned early, so a transient outage never poisons the cache.
+        if getattr(config, "cache_enabled", False) and ai_cache.put(cache, key, canonical):
+            ai_cache.save(config.resolved_cache_path(), cache)
         return canonical
     logger.info("AI suggested %r for %s which is not an allowed category; ignoring",
                 raw, path.name)

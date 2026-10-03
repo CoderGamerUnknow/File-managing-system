@@ -14,11 +14,13 @@ best-effort persistence: an unwritable path degrades to "no journal"
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
-import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("fs_organizer")
@@ -75,9 +77,8 @@ def append_move(config, src: Path, dest: Path, size: int, category: str | None =
         path = config.journal.resolved_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(entry, ensure_ascii=False) + "\n"
-        with _journal_lock:
-            with path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+        with _journal_lock, path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
     except OSError as exc:
         logger.warning("Could not write move journal: %s", exc)
 
@@ -109,3 +110,45 @@ def read_entries(path: Path, since_ts: float | None = None) -> list[dict]:
     except OSError as exc:
         logger.warning("Could not read move journal %s: %s", path, exc)
     return entries
+
+
+def export_journal(config, fmt: str = "csv") -> str:
+    """Serialize the full move journal as CSV or JSON text.
+
+    Read-only: never writes, never raises for a missing/disabled journal
+    (returns an empty document instead). Timestamps are emitted both as the
+    raw epoch and as ISO-8601 local time so spreadsheets stay readable.
+    """
+    if not getattr(config, "journal", None) or not config.journal.enabled:
+        entries: list[dict] = []
+    else:
+        entries = read_entries(config.journal.resolved_path())
+
+    rows = []
+    for e in entries:
+        ts = e.get("ts", 0)
+        try:
+            iso = datetime.fromtimestamp(float(ts)).isoformat(timespec="seconds")
+        except (OverflowError, OSError, TypeError, ValueError):
+            iso = ""
+        rows.append(
+            {
+                "ts": ts,
+                "ts_iso": iso,
+                "src": e.get("src", ""),
+                "dest": e.get("dest", ""),
+                "category": e.get("category", ""),
+                "size": e.get("size", ""),
+            }
+        )
+
+    if fmt == "json":
+        return json.dumps(rows, indent=2, ensure_ascii=False) + "\n"
+
+    # csv module handles quoting/escaping correctly for all fields.
+    buf = io.StringIO()
+    fields = ["ts", "ts_iso", "src", "dest", "category", "size"]
+    writer = csv.DictWriter(buf, fieldnames=fields, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()

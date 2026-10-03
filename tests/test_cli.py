@@ -56,7 +56,7 @@ def test_one_shot_skips_ignored(tmp_path, capsys):
 
 
 def test_one_shot_counts_nothing_when_empty(tmp_path, capsys):
-    p, watch = write_cfg(tmp_path)
+    p, _watch = write_cfg(tmp_path)
     rc = _one_shot(_load(p))
     assert rc == 0
     assert "Organized 0 file(s)" in capsys.readouterr().out
