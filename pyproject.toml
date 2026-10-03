@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fs-organizer"
-version = "0.3.0"
+version = "0.3.1"
 description = "Lightweight, rule-based file-system organizer with an AI fallback for unknown files."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 fs-organizer = "fs_organizer.__main__:main"
@@ -27,3 +27,35 @@ fs_organizer = ["dashboard.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+# Deliberate, project-wide rule set. The codebase is a long-running daemon,
+# so the `S` (bandit) rules are intentionally NOT selected: they fire on
+# `urllib` calls and `subprocess` use that are inherent to the design, and
+# would only be silenced with blanket noqa comments. `BLE` is selected so the
+# existing `# noqa: BLE001` markers on intentional broad excepts stay
+# meaningful instead of being flagged as unused.
+select = [
+    "E4",   # import conventions
+    "E7",   # statement correctness
+    "E9",   # runtime errors (undefined names, etc.)
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "BLE",  # blind except
+    "C4",   # comprehensions
+    "SIM",  # simplify
+    "RUF",  # ruff-specific
+]
+ignore = [
+    "B007",    # unused loop variable is sometimes clearer than `_`
+    "RUF012",  # mutable class attrs are intentional in tests
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["fs_organizer", "helpers"]

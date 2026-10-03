@@ -117,7 +117,6 @@ def install_autostart() -> None:
     pythonw = find_pythonw()
     if not pythonw:
         sys.exit("Could not locate pythonw.exe/python.exe next to the current interpreter.")
-    package_dir = Path(__file__).resolve().parent.parent
     command = f'"{pythonw}" -m fs_organizer "{CONFIG_PATH}" --log-file "{LOG_PATH}"'
     if "pythonw" not in pythonw.lower():
         print("WARNING: pythonw.exe not found; using python.exe (a console window will appear).")

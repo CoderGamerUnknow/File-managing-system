@@ -2,14 +2,12 @@
 from __future__ import annotations
 
 import json
-import threading
 import time
 
 import pytest
 
 from fs_organizer.runtime import InstanceLock
 from fs_organizer.watcher import Watcher
-
 from helpers import make_config
 
 
@@ -70,7 +68,7 @@ class TestRuntimeStats:
         import json
         import urllib.request
 
-        from fs_organizer.ui import ActivityLog, Dashboard
+        from fs_organizer.ui import Dashboard
 
         def free_port():
             import socket

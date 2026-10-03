@@ -13,7 +13,7 @@ Cases covered (input -> expected category):
 import pytest
 
 from fs_organizer.config import Config
-from fs_organizer.views import _file_category, files_payload
+from fs_organizer.views import files_payload
 
 
 def _write(root, *rel_parts, text="x"):

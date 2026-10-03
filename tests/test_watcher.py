@@ -2,7 +2,6 @@
 from pathlib import Path
 
 from fs_organizer.watcher import Organizer, _EventHandler
-
 from helpers import make_config
 
 

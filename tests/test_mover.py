@@ -1,11 +1,7 @@
 """Tests for the file mover: destinations, collisions, dry-run."""
 import logging
-from pathlib import Path
-
-import pytest
 
 from fs_organizer.mover import _unique_destination, destination_for, move_file
-
 from helpers import make_config
 
 

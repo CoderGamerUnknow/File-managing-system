@@ -6,8 +6,7 @@ filesystem. It is the contract for the dashboard's preview capability.
 """
 
 from fs_organizer.mover import plan
-from fs_organizer.views import plan_summary, _fmt_size
-
+from fs_organizer.views import _fmt_size, plan_summary
 from helpers import make_config as _make_config
 
 
@@ -107,15 +106,3 @@ class TestPlanSummary:
         assert summary["file_count"] == 1
         assert summary["bytes"] == 1
         assert summary["bytes_human"] == _fmt_size(1)
-
-
-def _fmt_size(bytes_value: float) -> str:
-    """Human readable size for the dashboard status card (mirror of ui.py)."""
-    if not bytes_value >= 0:
-        return "—"
-    units = ["B", "KB", "MB", "GB", "TB"]
-    value, unit_index = bytes_value, 0
-    while value >= 1024 and unit_index < len(units) - 1:
-        value /= 1024
-        unit_index += 1
-    return f"{value:.1f} {units[unit_index]}"

@@ -64,7 +64,10 @@ def main() -> int:
     # then can't be processed and the shutdown check times out. A file has
     # no capacity limit; it is read after the child exits.
     child_out_path = root / "child_stdout.log"
-    child_out = open(child_out_path, "w", encoding="utf-8")
+    # Deliberately not a `with` block: the handle stays open for the whole
+    # subprocess lifetime and is closed on both the success and early-return
+    # paths below.
+    child_out = open(child_out_path, "w", encoding="utf-8")  # noqa: SIM115
     proc = subprocess.Popen(
         [sys.executable, "-c", child_code],
         stdout=child_out, stderr=subprocess.STDOUT,

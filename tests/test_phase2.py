@@ -7,7 +7,6 @@ import time
 
 from fs_organizer.config import AgePolicy, ConfigError, DestinationTemplate, load_config
 from fs_organizer.mover import age_policy_allows, destination_for, move_file, plan_actions
-
 from helpers import make_config
 
 

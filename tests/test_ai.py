@@ -73,7 +73,7 @@ class TestExtractJsonObject:
             _extract_json_object("I have no idea what this file is.")
 
     def test_invalid_json_raises(self):
-        with pytest.raises(Exception):
+        with pytest.raises(ValueError):
             _extract_json_object('{"category": "Music"')  # truncated
 
 
