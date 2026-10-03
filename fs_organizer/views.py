@@ -53,9 +53,14 @@ def _file_category(path: Path, root: Path) -> str:
 
     The mover places files at ``root/<category>[/YYYY-MM]/...``, so the
     category is always the first path segment below the target root; a file
-    sitting directly in the target root has no category.
+    sitting directly in the target root has no category. A path outside the
+    root (e.g. a symlink target that escapes it) also has no category —
+    never raise, the dashboard must survive any tree it is pointed at.
     """
-    relative = path.relative_to(root)
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return ""
     return relative.parts[0] if len(relative.parts) > 1 else ""
 
 
@@ -194,7 +199,7 @@ def files_payload(config, max_files: int = 2000) -> dict:
 
 def status_payload(config) -> dict:
     """Summarize the running config for the dashboard."""
-    rules = {k: v for k, v in sorted(config.target_rules.items())}
+    rules = dict(sorted(config.target_rules.items()))
     # Invert to category -> [ext, ...] for a friendlier UI table.
     by_category: dict[str, list[str]] = {}
     for ext, cat in rules.items():
@@ -214,6 +219,7 @@ def status_payload(config) -> dict:
         "file_stable_seconds": config.file_stable_seconds,
         "age_policy": config.age_policy.to_dict(),
         "destination_template": config.destination_template.to_dict(),
+        "sub_rules": [r.to_dict() for r in config.sub_rules],
         "ai": {
             "enabled": ai.enabled,
             "provider": ai.provider,
@@ -293,5 +299,6 @@ def rules_payload(config) -> dict:
             "ai_categories": cover["ai_categories"],
             "mismatched_categories": cover["mismatched_categories"],
         },
+        "sub_rules": [r.to_dict() for r in config.sub_rules],
         "action_counts": actions["counts"],
     }

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .rules import categories_for
 
@@ -74,16 +76,27 @@ class ConfigInvalidError(ConfigError):
 class AIConfig:
     enabled: bool = False
     provider: str = "ollama"  # "openai" | "ollama"
-    api_key: Optional[str] = None
+    api_key: str | None = None
     model: str = "llama3.2"
-    base_url: Optional[str] = None
+    base_url: str | None = None
     timeout_seconds: float = 15.0
     max_bytes_to_read: int = 65536
     allowed_subfolders: list[str] = field(default_factory=list)
     extensions: list[str] = field(default_factory=list)
+    # V3: cache successful classifications so repeat files never re-hit the
+    # model (low-resource-daemon skill). Off by default — the cache writes a
+    # file next to the journal, so enabling it is an explicit opt-in.
+    cache_enabled: bool = False
+    cache_path: str | None = None
+
+    def resolved_cache_path(self) -> Path:
+        """Where the classification cache lives (created on first write)."""
+        if self.cache_path:
+            return Path(os.path.expanduser(self.cache_path))
+        return Path.home() / ".fs-organizer" / "ai_cache.json"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AIConfig":
+    def from_dict(cls, data: dict[str, Any]) -> AIConfig:
         """Build an AIConfig from a raw ``ai`` JSON object (validates each field)."""
         return cls(
             enabled=_coerce_bool(data.get("enabled", False), "ai.enabled"),
@@ -103,6 +116,12 @@ class AIConfig:
             extensions=[
                 e.lower() for e in data.get("extensions", []) or [] if isinstance(e, str)
             ],
+            cache_enabled=_coerce_bool(
+                data.get("cache_enabled", False), "ai.cache_enabled"
+            ),
+            cache_path=_coerce_non_empty_str_or_none(
+                data.get("cache_path"), "ai.cache_path"
+            ),
         )
 
 
@@ -111,10 +130,10 @@ class JournalConfig:
     """Persisted move journal (JSONL audit trail + dashboard date source)."""
 
     enabled: bool = False
-    path: Optional[str] = None  # default: ~/.fs-organizer/moves.jsonl
+    path: str | None = None  # default: ~/.fs-organizer/moves.jsonl
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "JournalConfig":
+    def from_dict(cls, data: dict[str, Any]) -> JournalConfig:
         return cls(
             enabled=_coerce_bool(data.get("enabled", False), "journal.enabled"),
             path=_coerce_non_empty_str_or_none(data.get("path"), "journal.path"),
@@ -138,10 +157,10 @@ class AgePolicy:
     """
 
     min_age_seconds: float = 0.0            # 0 = no lower bound
-    max_age_days: Optional[float] = None    # None = no upper bound
+    max_age_days: float | None = None    # None = no upper bound
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "AgePolicy":
+    def from_dict(cls, data: dict[str, Any]) -> AgePolicy:
         if not isinstance(data, dict):
             raise ConfigInvalidError(
                 f"'age_policy' must be an object, got {type(data).__name__}"
@@ -168,11 +187,9 @@ class AgePolicy:
     def violates(self, mtime: float, now: float) -> bool:
         """True when the file's age is outside the allowed window."""
         age = now - mtime
-        if age < self.min_age_seconds:
-            return True
-        if self.max_age_days is not None and age > self.max_age_days * 86400.0:
-            return True
-        return False
+        return age < self.min_age_seconds or (
+            self.max_age_days is not None and age > self.max_age_days * 86400.0
+        )
 
 
 @dataclass
@@ -191,7 +208,7 @@ class DestinationTemplate:
     pattern: str = "{category}"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "DestinationTemplate":
+    def from_dict(cls, data: dict[str, Any]) -> DestinationTemplate:
         if not isinstance(data, dict):
             raise ConfigInvalidError(
                 f"'destination_template' must be an object, got {type(data).__name__}"
@@ -233,11 +250,16 @@ class DestinationTemplate:
                 start = part.find("{date")
                 end = part.find("}", start)
                 if end == -1:
-                    fmt = "%Y-%m"
-                    rendered = (
-                        part[:start]
-                        + datetime.fromtimestamp(mtime).strftime(fmt)
-                        + part[end + 1 :]
+                    # Unterminated token (e.g. "{date:%Y/%m}" — the slash
+                    # split it before its closing brace). The previous code
+                    # used part[end + 1:] with end == -1, which is part[0:],
+                    # so the malformed token was appended a SECOND time:
+                    # "{date:%Y/%m}" rendered as
+                    # "2025-12{date:%Y/%m}" — a literal garbage folder name
+                    # (flaw #48). Drop the malformed remainder instead and
+                    # fall back to the safe default format.
+                    rendered = part[:start] + datetime.fromtimestamp(mtime).strftime(
+                        "%Y-%m"
                     )
                 else:
                     token = part[start : end + 1]
@@ -260,11 +282,247 @@ class DestinationTemplate:
 
 
 @dataclass
+class SubRule:
+    """V2 per-category sub-rule: route files differently by source folder.
+
+    ``{"pattern": "**/invoices/**", "extensions": [".pdf"], "category": "Invoices"}``
+    sends PDFs landing under a ``Downloads/invoices`` folder to the
+    ``Invoices`` category, while every other PDF still follows the global
+    rule table.
+
+    Matching is extension-first: the file's extension must be in
+    ``extensions`` (case-insensitive), then the *source* path is matched
+    against ``pattern`` with the same convention as ``ignore_patterns`` —
+    a pattern containing a slash matches the full path, a bare pattern
+    matches the file name. Evaluation order is the list order; the first
+    match wins (visible in ``check`` output).
+
+    Patterns are matched with ``fnmatch`` against the already-resolved path
+    and a leading ``~/`` IS expanded to the home directory, exactly as
+    ``watch_folders`` and ``target_root`` are. Note also that ``fnmatch``
+    has no notion of ``**``: it is two ordinary ``*`` wildcards.
+    """
+
+    pattern: str = ""
+    extensions: list[str] = field(default_factory=list)
+    category: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], index: int) -> SubRule:
+        where = f"sub_rules[{index}]"
+        if not isinstance(data, dict):
+            raise ConfigInvalidError(f"'{where}' must be an object, got {type(data).__name__}")
+        pattern = data.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise ConfigInvalidError(f"'{where}.pattern' must be a non-empty glob string")
+        category = data.get("category")
+        if not isinstance(category, str) or not category.strip():
+            raise ConfigInvalidError(f"'{where}.category' must be a non-empty category name")
+        exts = data.get("extensions", [])
+        if (
+            not isinstance(exts, list)
+            or not exts
+            or not all(isinstance(e, str) and e.startswith(".") for e in exts)
+        ):
+            raise ConfigInvalidError(
+                f"'{where}.extensions' must be a non-empty list of extensions like '.pdf'"
+            )
+        return cls(
+            pattern=pattern.strip(),
+            extensions=[e.lower() for e in exts],
+            category=category.strip(),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pattern": self.pattern,
+            "extensions": list(self.extensions),
+            "category": self.category,
+        }
+
+    def match_pattern(self) -> str:
+        """``pattern`` prepared for ``fnmatch`` against a resolved posix path.
+
+        Two transformations, both needed for a glob written by a human to
+        work the same way it does for ``watch_folders``:
+
+        - **Backslashes become forward slashes.** ``category_for`` matches
+          against ``Path.as_posix()``, and a Windows-style pattern such as
+          ``~\\Downloads\\**`` would otherwise never line up.
+        - **A genuine home reference is expanded** (``~``, ``~/...``,
+          ``~\\...``) so ``~/Downloads/invoices/**`` behaves like every other
+          path field in the config.
+
+        The guard on the expansion is deliberate and NOT paranoia:
+        ``os.path.expanduser("~scan.pdf")`` returns ``C:\\Users\\scan.pdf``
+        on Windows, because CPython reads everything after a lone ``~`` as
+        a *username*. A bare ``~name`` pattern carries no slash, so it is a
+        file-NAME glob where ``~`` is a perfectly legal character — expanding
+        it would silently rewrite the user's rule. So only a lone ``~`` or a
+        ``~`` immediately followed by a separator counts as home.
+
+        ``pattern`` itself is left exactly as authored, so ``to_dict()``
+        round-trips the user's own text and ``check --json`` never leaks an
+        absolute home path.
+        """
+        pattern = self.pattern
+        if pattern == "~" or pattern[:2] in ("~/", "~\\"):
+            pattern = os.path.expanduser(pattern)
+        return pattern.replace("\\", "/")
+
+
+@dataclass
+class NameRule:
+    """V3 name/content rule: route a file by its *name*, not just extension.
+
+    ``{"pattern": "invoice*", "category": "Invoices"}`` sends every file
+    whose name matches the glob to ``Invoices`` regardless of extension, and
+    ``{"pattern": "^IMG_\\d+", "category": "Photos", "regex": true}``
+    matches the name as a regular expression. ``extensions`` optionally
+    narrows the rule to a set of suffixes (empty = any extension).
+
+    Name rules are evaluated after ``sub_rules`` and before the global
+    ``target_rules`` table, in list order, first match wins — the same
+    precedence model as everything else in the config.
+    """
+
+    pattern: str = ""
+    category: str = ""
+    regex: bool = False
+    extensions: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any], index: int) -> NameRule:
+        where = f"name_rules[{index}]"
+        if not isinstance(data, dict):
+            raise ConfigInvalidError(f"'{where}' must be an object, got {type(data).__name__}")
+        pattern = data.get("pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise ConfigInvalidError(f"'{where}.pattern' must be a non-empty string")
+        category = data.get("category")
+        if not isinstance(category, str) or not category.strip():
+            raise ConfigInvalidError(f"'{where}.category' must be a non-empty category name")
+        regex = _coerce_bool(data.get("regex", False), f"{where}.regex")
+        exts = data.get("extensions", [])
+        if not isinstance(exts, list) or not all(
+            isinstance(e, str) and e.startswith(".") for e in exts
+        ):
+            raise ConfigInvalidError(
+                f"'{where}.extensions' must be a list of extensions like '.pdf'"
+            )
+        pattern = pattern.strip()
+        if regex:
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ConfigInvalidError(
+                    f"'{where}.pattern' is not a valid regular expression: {exc}"
+                ) from exc
+        return cls(
+            pattern=pattern,
+            category=category.strip(),
+            regex=regex,
+            extensions=[e.lower() for e in exts],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pattern": self.pattern,
+            "category": self.category,
+            "regex": self.regex,
+            "extensions": list(self.extensions),
+        }
+
+    def matches(self, path: Path) -> bool:
+        """True when *path*'s name matches this rule (and its extension is allowed)."""
+        # Case-tolerant on both sides: from_dict() normalizes the list, but a
+        # hand-built rule (embedded config, tests) may hold ".PDF" as authored.
+        if self.extensions and path.suffix.lower() not in {
+            e.lower() for e in self.extensions
+        }:
+            return False
+        if self.regex:
+            return re.search(self.pattern, path.name) is not None
+        return fnmatch.fnmatch(path.name, self.pattern)
+
+
+@dataclass
+class QuietHours:
+    """V3 quiet hours: organize only within a daily time window.
+
+    ``{"start": "08:00", "end": "22:00"}`` organizes only between 08:00 and
+    22:00 local time; outside it, incoming events are left in place (the
+    watcher simply does not act — files are not held, so a file that arrives
+    at 23:00 is picked up by the next scan after the window opens). ``start``
+    and ``end`` are ``HH:MM``. A window whose end is <= its start wraps
+    midnight (``22:00``-``06:00``). Disabled when both are unset.
+    """
+
+    start: str | None = None
+    end: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> QuietHours:
+        if not isinstance(data, dict):
+            raise ConfigInvalidError(
+                f"'quiet_hours' must be an object, got {type(data).__name__}"
+            )
+        start = data.get("start")
+        end = data.get("end")
+        if start is None and end is None:
+            return cls()
+        if not isinstance(start, str) or not isinstance(end, str):
+            raise ConfigInvalidError(
+                "'quiet_hours' requires both 'start' and 'end' as 'HH:MM' strings"
+            )
+        for label, value in (("start", start), ("end", end)):
+            if _parse_hhmm(value) is None:
+                raise ConfigInvalidError(
+                    f"'quiet_hours.{label}' must be 'HH:MM' (00:00-23:59), got {value!r}"
+                )
+        return cls(start=start.strip(), end=end.strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"start": self.start, "end": self.end}
+
+    @property
+    def enabled(self) -> bool:
+        return self.start is not None and self.end is not None
+
+    def allows(self, now: datetime | None = None) -> bool:
+        """True when *now* (default: local time) is inside the window."""
+        if not self.enabled:
+            return True
+        now = now or datetime.now()
+        current = now.hour * 60 + now.minute
+        start = _parse_hhmm(self.start)
+        end = _parse_hhmm(self.end)
+        if start is None or end is None:
+            return True
+        if start <= end:
+            return start <= current <= end
+        # Window wraps midnight (e.g. 22:00-06:00).
+        return current >= start or current <= end
+
+
+def _parse_hhmm(value: str) -> int | None:
+    """'HH:MM' -> minutes since midnight, or None when malformed."""
+    try:
+        hours, minutes = value.split(":")
+        h, m = int(hours), int(minutes)
+    except (ValueError, AttributeError):
+        return None
+    if 0 <= h <= 23 and 0 <= m <= 59:
+        return h * 60 + m
+    return None
+
+
+@dataclass
 class Config:
     watch_folders: list[str] = field(default_factory=list)
     target_rules: dict[str, str] = field(default_factory=dict)
     ignore_patterns: list[str] = field(default_factory=list)
-    target_root: Optional[str] = None
+    target_root: str | None = None
     use_date_subfolders: bool = False
     dry_run: bool = False
     file_stable_seconds: float = 1.0
@@ -273,6 +531,10 @@ class Config:
     journal: JournalConfig = field(default_factory=JournalConfig)
     age_policy: AgePolicy = field(default_factory=AgePolicy)
     destination_template: DestinationTemplate = field(default_factory=DestinationTemplate)
+    sub_rules: list[SubRule] = field(default_factory=list)
+    name_rules: list[NameRule] = field(default_factory=list)
+    quiet_hours: QuietHours = field(default_factory=QuietHours)
+    disk_space_guard: float = 0.0  # V3: refuse moves when dest volume free% < this
 
     def resolved_watch_folders(self) -> list[Path]:
         """Existing watch folders, resolved (the set the organizer acts on)."""
@@ -333,7 +595,39 @@ class Config:
             },
             "age_policy": self.age_policy.to_dict(),
             "destination_template": self.destination_template.to_dict(),
+            "sub_rules": [r.to_dict() for r in self.sub_rules],
+            "name_rules": [r.to_dict() for r in self.name_rules],
+            "quiet_hours": self.quiet_hours.to_dict(),
+            "disk_space_guard": self.disk_space_guard,
         }
+
+    def category_for(self, path: Path) -> str | None:
+        """The category for *path*: first matching sub-rule, else the table.
+
+        Sub-rules are evaluated in config order; a rule matches when the
+        file's extension is in the rule's list AND its path matches the
+        rule's glob (same slash convention as ignore patterns). The global
+        ``target_rules`` table is the fallback. Pure path/string work —
+        never touches the filesystem.
+        """
+        ext = path.suffix.lower()
+        if self.sub_rules:
+            posix_full = path.as_posix()
+            for rule in self.sub_rules:
+                if ext not in rule.extensions:
+                    continue
+                normalized = rule.match_pattern()
+                if "/" in normalized:
+                    if fnmatch.fnmatch(posix_full, normalized):
+                        return rule.category
+                elif fnmatch.fnmatch(path.name, normalized):
+                    return rule.category
+        # V3 name/content rules: match by file name (glob or regex), before
+        # the extension table but after sub-rules (source-folder routing wins).
+        for rule in self.name_rules:
+            if rule.matches(path):
+                return rule.category
+        return self.target_rules.get(ext)
 
     def coverage_report(self) -> dict[str, object]:
         """Deterministic coverage report over the resolved config fields.
@@ -382,7 +676,7 @@ def _coerce_non_empty_str(value: Any, key: str) -> str:
     raise ConfigInvalidError(f"'{key}' must be a non-empty string, got {value!r}")
 
 
-def _coerce_non_empty_str_or_none(value: Any, key: str) -> Optional[str]:
+def _coerce_non_empty_str_or_none(value: Any, key: str) -> str | None:
     """Non-empty string, or None for an unset/optional value (e.g. base_url)."""
     if value is None:
         return None
@@ -517,6 +811,27 @@ def from_dict(data: dict[str, Any]) -> Config:
         else DestinationTemplate()
     )
 
+    sub_rules_data = data.get("sub_rules", [])
+    if not isinstance(sub_rules_data, list):
+        raise ConfigInvalidError(
+            f"'sub_rules' must be a list of rule objects, got {type(sub_rules_data).__name__}"
+        )
+    sub_rules = [
+        SubRule.from_dict(r, i) for i, r in enumerate(sub_rules_data) if r is not None
+    ]
+
+    name_rules_data = data.get("name_rules", [])
+    if not isinstance(name_rules_data, list):
+        raise ConfigInvalidError(
+            f"'name_rules' must be a list of rule objects, got {type(name_rules_data).__name__}"
+        )
+    name_rules = [
+        NameRule.from_dict(r, i) for i, r in enumerate(name_rules_data) if r is not None
+    ]
+
+    quiet_data = data.get("quiet_hours")
+    quiet_hours = QuietHours.from_dict(quiet_data) if quiet_data is not None else QuietHours()
+
     return Config(
         watch_folders=watch_folders,
         target_rules=target_rules,
@@ -534,9 +849,32 @@ def from_dict(data: dict[str, Any]) -> Config:
         journal=journal,
         age_policy=age_policy,
         destination_template=template,
+        sub_rules=sub_rules,
+        name_rules=name_rules,
+        quiet_hours=quiet_hours,
+        disk_space_guard=_coerce_non_negative_number(
+            data.get("disk_space_guard", 0.0), "disk_space_guard"
+        ),
     )
+
+
+def _apply_env_overrides(config: Config) -> Config:
+    """Apply ``FSORG_*`` environment overrides for scripting/CI.
+
+    Only two knobs are exposed, both of which are safe to force from the
+    environment: ``FSORG_DRY_RUN`` (force a preview) and ``FSORG_TARGET_ROOT``
+    (redirect output). They override the file values for this process only;
+    nothing is written back. Truthy values are ``1/true/yes/on``.
+    """
+    dry = os.environ.get("FSORG_DRY_RUN")
+    if dry is not None:
+        config.dry_run = dry.strip().lower() in ("1", "true", "yes", "on")
+    root = os.environ.get("FSORG_TARGET_ROOT")
+    if root and root.strip():
+        config.target_root = root.strip()
+    return config
 
 
 def load_config(path: str | Path) -> Config:
     """Load and validate a JSON config file into a Config object."""
-    return from_dict(_load_json(Path(path)))
+    return _apply_env_overrides(from_dict(_load_json(Path(path))))

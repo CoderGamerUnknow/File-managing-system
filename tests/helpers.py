@@ -1,7 +1,7 @@
 """Shared test helpers for the fs-organizer test suite."""
 from __future__ import annotations
 
-from fs_organizer.config import Config
+from fs_organizer.config import Config, SubRule
 
 
 def make_config(tmp_path, rules=None, **overrides) -> Config:
@@ -18,5 +18,10 @@ def make_config(tmp_path, rules=None, **overrides) -> Config:
         target_root=str(tmp_path / "out"),
     )
     for key, value in overrides.items():
+        if key == "sub_rules":
+            # Normalize raw dict specs into SubRule objects so tests that build
+            # configs in-memory exercise the same objects category_for() expects.
+            value = [SubRule.from_dict(r, i) if isinstance(r, dict) else r
+                     for i, r in enumerate(value)]
         setattr(cfg, key, value)
     return cfg

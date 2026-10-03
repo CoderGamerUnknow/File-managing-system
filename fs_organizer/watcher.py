@@ -12,7 +12,7 @@ from .ai import classify_with_ai
 from .config import Config
 from .mover import _is_inside, move_file
 from .pool import Debouncer, WorkerPool
-from .rules import is_ignored, match_extension
+from .rules import is_ignored
 
 logger = logging.getLogger("fs_organizer")
 
@@ -41,13 +41,20 @@ class Organizer:
             with self._retry_lock:
                 self._lock_retries.pop(path, None)  # file gone; drop retry state
             return
+        # V3 quiet hours: outside the configured window the organizer simply
+        # does not act. The file is not held — it stays in the watch folder
+        # and the next event (or a scan) after the window opens picks it up.
+        if not self.config.quiet_hours.allows():
+            logger.debug("Quiet hours: leaving %s for later", path.name)
+            return
         if is_ignored(path, self.config.effective_ignore_patterns()):
             return
         # Skip files that live inside the target root already (avoid loops).
         if self._inside_root(path):
             return
 
-        category = match_extension(path, self.config.target_rules)
+        # Sub-rules first (per-source-folder routing), then the global table.
+        category = self.config.category_for(path)
         if category is None:
             if not self.config.ai.enabled or path.suffix.lower() not in self.config.ai.extensions:
                 logger.debug("No rule and AI not applicable for %s", path.name)
@@ -189,9 +196,18 @@ class Watcher:
         self._held: set[Path] = set()
 
         def _dispatch(path: Path) -> None:
-            if self._paused.is_set():
-                with self._pause_lock:
+            # The paused flag is read INSIDE _pause_lock, the same lock
+            # resume() takes when it clears the flag and swaps _held. Reading
+            # it outside the lock let a callback pass the check, block on the
+            # lock while resume() swapped, then insert into the fresh _held
+            # set — a path no resume would ever dispatch (flaw #47).
+            with self._pause_lock:
+                if self._paused.is_set():
                     self._held.add(path)
+                    was_held = True
+                else:
+                    was_held = False
+            if was_held:
                 if activity is not None:
                     activity.add("info", path, "held (paused)")
                 return
@@ -224,16 +240,26 @@ class Watcher:
 
     def pause(self) -> None:
         """Stop acting on files; arriving events are held until resume()."""
-        self._paused.set()
+        # Set under the same lock resume() clears it with, so the
+        # dispatch/resume ordering stays well-defined (flaw #47).
+        with self._pause_lock:
+            self._paused.set()
         if self.organizer.activity is not None and hasattr(self.organizer.activity, "set_paused"):
             self.organizer.activity.set_paused(True)
         logger.info("Paused: events are being held")
 
     def resume(self) -> None:
-        """Dispatch everything held while paused (dedup via submit_unique)."""
+        """Dispatch everything held while paused (dedup via submit_unique).
+
+        The paused flag is cleared INSIDE the same lock that swaps ``_held``.
+        Clearing it after the swap left a window where a debouncer callback
+        could observe "paused", take the lock, and insert into the *fresh*
+        ``_held`` set — a path that no resume would ever dispatch, silently
+        stranded until the next resume or shutdown (flaw #47).
+        """
         with self._pause_lock:
+            self._paused.clear()
             held, self._held = self._held, set()
-        self._paused.clear()
         if self.organizer.activity is not None and hasattr(self.organizer.activity, "set_paused"):
             self.organizer.activity.set_paused(False)
         for path in held:
@@ -243,7 +269,9 @@ class Watcher:
     def drain_held(self, timeout: float = 5.0) -> None:
         """Resume-and-dispatch helper for shutdown: releases held paths even
         if still paused, so a paused daemon shuts down without losing them."""
-        if self._held:
+        with self._pause_lock:
+            has_held = bool(self._held)
+        if has_held:
             self.resume()
 
     @staticmethod
@@ -289,7 +317,7 @@ class Watcher:
             for folder in old_watches:
                 try:
                     self.observer.schedule(self.handler, str(folder), recursive=old_config.recursive)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception("Could not re-schedule %s during revert", folder)
             raise
 

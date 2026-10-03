@@ -24,7 +24,8 @@ Correctness notes:
 
 from __future__ import annotations
 
-import errno
+import contextlib
+import hashlib
 import logging
 import os
 import shutil
@@ -36,18 +37,20 @@ from pathlib import Path
 
 from . import journal
 from .config import Config
-from .rules import is_ignored, match_extension
+from .rules import is_ignored
 
 __all__ = [
     "MoveResult",
     "age_policy_allows",
     "destination_for",
+    "move_file",
     "plan",
     "plan_actions",
-    "move_file",
 ]
 
-logger = logging.getLogger("fs_organizer")# Serializes the existence-check + move sequence per destination directory.
+logger = logging.getLogger("fs_organizer")
+
+# Serializes the existence-check + move sequence per destination directory.
 # Without this, two workers moving same-named files from different watch
 # folders can both pass the "is the name free?" check and the second
 # shutil.move silently overwrites the first (verified data loss).
@@ -258,7 +261,7 @@ def _scan_files(
                 decision = "pattern"
                 category = destination = None
             else:
-                category = match_extension(path, config.target_rules)
+                category = config.category_for(path)  # sub-rules first, then table
                 if category is not None:
                     if not age_policy_allows(path, config):
                         # V2 age policy: matchable, but outside the age
@@ -446,6 +449,63 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _hash_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Streamed SHA-256 of a file (constant memory)."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            chunk = fh.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _verify_copy(source: Path, copy: Path) -> bool:
+    """True when *copy* has byte-identical content to *source*.
+
+    Size is compared first (cheap, catches the common truncation) and the
+    streamed hash only runs when the sizes agree, so the extra read is paid
+    only on the cross-volume path that already read both files once.
+    """
+    try:
+        if source.stat().st_size != copy.stat().st_size:
+            return False
+        return _hash_file(source) == _hash_file(copy)
+    except OSError:
+        return False
+
+
+def _free_percent(path: Path) -> float:
+    """Free-space percentage of the volume holding *path* (-1.0 if unknown)."""
+    try:
+        usage = shutil.disk_usage(str(path))
+        return 100.0 * usage.free / usage.total if usage.total else -1.0
+    except OSError:
+        return -1.0
+
+
+def _disk_space_ok(path: Path, config: Config) -> bool:
+    """V3 disk-space guard: False when the destination volume is too full.
+
+    ``disk_space_guard`` is the minimum percentage of free space that must
+    remain on the destination volume; ``0`` disables the guard. A volume
+    that cannot be queried (unusual filesystems, permission errors) is
+    treated as OK — failing closed here would strand files forever.
+    """
+    threshold = float(getattr(config, "disk_space_guard", 0.0) or 0.0)
+    if threshold <= 0:
+        return True
+    try:
+        usage = shutil.disk_usage(str(path))
+    except OSError:
+        return True
+    try:
+        return (100.0 * usage.free / usage.total) >= threshold
+    except ZeroDivisionError:
+        return True
+
+
 def _staged_move(path: Path, final: Path) -> None:
     """Crash-safe cross-volume move: copy -> fsync -> rename -> delete.
 
@@ -468,6 +528,12 @@ def _staged_move(path: Path, final: Path) -> None:
             shutil.copyfileobj(src, dst, length=1024 * 1024)
             dst.flush()
             os.fsync(dst.fileno())
+        # V3 integrity verify: the whole point of staging is that the source
+        # is only deleted after the destination is provably complete. A
+        # size/hash mismatch means the copy is not trustworthy — abort
+        # (the temp is removed below, the source survives untouched).
+        if not _verify_copy(path, temp):
+            raise OSError(f"integrity check failed copying {path} -> {final}")
         os.replace(str(temp), str(final))
         _fsync_dir(final.parent)
         try:
@@ -484,10 +550,8 @@ def _staged_move(path: Path, final: Path) -> None:
             )
     except BaseException:
         # Never leave a partial staging file behind on a mid-copy failure.
-        try:
+        with contextlib.suppress(OSError):
             temp.unlink()
-        except OSError:
-            pass
         raise
 
 
@@ -529,6 +593,16 @@ def move_file(path: Path, category: str, config: Config) -> MoveResult:
         if config.dry_run:
             logger.info("[dry-run] Would move %s -> %s", path, dest)
             return MoveResult(would_move=True, destination=dest)
+
+        # V3 disk-space guard: a nearly-full destination volume turns a move
+        # into a half-copied file (or a failed one); leave the source alone.
+        if not _disk_space_ok(dest_dir, config):
+            logger.warning(
+                "Disk space guard: %.1f%% free on %s is below the configured "
+                "minimum; leaving %s in place",
+                _free_percent(dest_dir), dest_dir, path.name,
+            )
+            return MoveResult(skipped=True, reason="destination volume nearly full")
 
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Check-then-move must be atomic against other workers: the lock

@@ -8,20 +8,13 @@ Public surface (everything else is internal implementation detail):
 - :func:`fs_organizer.config.Config.expanded_watch_folders` / :func:`fs_organizer.config.Config.effective_ignore_patterns` / :func:`fs_organizer.config.Config.coverage_report` -- resolved configuration metadata
 """
 
-from . import ai
-from . import config
-from . import diagnostics
-from . import mover
-from . import pool
-from . import rules
-from . import ui
-from . import views
-from . import watcher
+from . import ai, config, diagnostics, duplicates, mover, pool, rules, ui, views, watcher
 
 __all__ = [
     "ai",
     "config",
     "diagnostics",
+    "duplicates",
     "mover",
     "pool",
     "rules",
@@ -30,5 +23,5 @@ __all__ = [
     "watcher",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 

@@ -13,6 +13,7 @@ guard must never require manual cleanup after an unclean shutdown.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -91,10 +92,8 @@ class InstanceLock:
             if state != "held" or force:
                 # A stale/garbage lock file must be removed before the create
                 # (its mere existence would fail the exclusive 'x' open).
-                try:
+                with contextlib.suppress(FileNotFoundError):
                     self.path.unlink()
-                except FileNotFoundError:
-                    pass
             self.path.parent.mkdir(parents=True, exist_ok=True)
             # 'x' mode: create fails if another process won the race.
             with self.path.open("x", encoding="utf-8") as fh:
@@ -111,13 +110,11 @@ class InstanceLock:
         """Remove our lock file. Never raises; a vanished file is fine."""
         if not self._held:
             return
-        try:
+        with contextlib.suppress(OSError):
             self.path.unlink()
-        except OSError:
-            pass
         self._held = False
 
-    def __enter__(self) -> "InstanceLock":
+    def __enter__(self) -> InstanceLock:
         ok, msg = self.acquire()
         if not ok:
             raise RuntimeError(msg)

@@ -5,7 +5,6 @@ import logging
 import queue
 import threading
 import time
-from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger("fs_organizer")
@@ -56,7 +55,7 @@ class WorkerPool:
                     self._running.add(key)
             try:
                 func(*args)
-            except Exception:  # noqa: BLE001 - workers must never die
+            except Exception:
                 logger.exception("Worker task failed")
             finally:
                 self._queue.task_done()
@@ -170,7 +169,7 @@ class Debouncer:
             for path in ready:
                 try:
                     self._callback(path)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     logger.exception("Debouncer callback failed for %s", path)
             self._shutdown.wait(self._check_interval)
 

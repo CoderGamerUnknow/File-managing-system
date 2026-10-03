@@ -47,6 +47,12 @@ def check_report(config, watch_files: dict[str, bool]) -> str:
     add(f"  effective rules: {len(config.target_rules)} extension map(s)")
     for ext, cat in sorted(config.target_rules.items()):
         add(f"    .{ext[1:]} -> {cat}")
+    if config.sub_rules:
+        add(f"  sub_rules ({len(config.sub_rules)}):")
+        for i, rule in enumerate(config.sub_rules):
+            add(
+                f"    [{i}] {rule.extensions} in {rule.pattern} -> {rule.category}"
+            )
     add(f"  effective ignore patterns ({len(config.effective_ignore_patterns())}):")
     for pat in config.effective_ignore_patterns():
         add(f"    {pat}")
@@ -128,11 +134,14 @@ def watch_diag(config, watch_files: list[str]) -> dict[str, object]:
             "would_classify_ai": counts["would_classify_ai"],
             # Same source as the counts above (plan_actions' bounded scan),
             # so matched_rules honors config.recursive and can never disagree
-            # with would_organize in the same payload (flaw #41).
+            # with would_organize in the same payload (flaw #41). The deciding
+            # category is reported verbatim — with sub_rules a file's category
+            # may come from a sub-rule, not the global table, so deriving it
+            # from the suffix via the table would misreport it.
             "matched_rules": sorted(
-                config.target_rules[Path(r["path"]).suffix.lower()]
+                r["category"]
                 for r in actions["would_organize"]
-                if Path(r["path"]).suffix.lower() in config.target_rules
+                if r.get("category")
             ),
         }
         out["files"][str(folder)] = entries

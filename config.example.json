@@ -33,6 +33,25 @@
   "dry_run": false,
   "file_stable_seconds": 1.0,
   "recursive": false,
+  "sub_rules": [
+    {
+      "pattern": "**/invoices/**",
+      "extensions": [".pdf"],
+      "category": "Invoices"
+    }
+  ],
+  "name_rules": [
+    {
+      "pattern": "^Screenshot",
+      "category": "Images",
+      "regex": true
+    }
+  ],
+  "quiet_hours": {
+    "start": null,
+    "end": null
+  },
+  "disk_space_guard": 5.0,
   "journal": {
     "enabled": false,
     "path": null
@@ -46,6 +65,8 @@
     "timeout_seconds": 15,
     "max_bytes_to_read": 65536,
     "allowed_subfolders": ["Documents", "Images", "Music", "Videos", "Archives", "Spreadsheets", "Presentations", "Projects", "Notes"],
-    "extensions": [".txt", ".md", ".log", ".csv", ".json", ".xml", ".yaml", ".yml", ".html", ".rtf", ".doc", ".dat"]
+    "extensions": [".txt", ".md", ".log", ".csv", ".json", ".xml", ".yaml", ".yml", ".html", ".rtf", ".doc", ".dat"],
+    "cache_enabled": false,
+    "cache_path": null
   }
 }
