@@ -34,6 +34,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   on-demand CI, verifying artifacts locally, and enabling PyPI publishing.
 - `.gitignore`: the `venv-*` scratch environments created by
   `scripts/verify_artifact.sh`.
+- **Local Linux runs, no Docker**: `scripts/setup_local_linux.sh` rebuilds
+  an Alpine + Python 3.12 WSL2 distro from scratch, copies the repo into it
+  and installs the dev dependencies, so lint, the full suite and both smoke
+  scripts can be executed on Linux from a Windows box instead of only via
+  CI (`docs/TESTING.md`). Verified on this machine: `ruff check` clean,
+  512 passed / 4 skipped, `smoke_dryrun` and `smoke_ui` green — on musl,
+  which CI's glibc runners never cover. The default Alpine mirror is
+  chosen for speed because `dl-cdn.alpinelinux.org` measured ~3 KB/s here
+  against 150–500 KB/s for the default (`ALPINE_MIRROR` overrides it).
 
 ## [0.4.1] — 2026-10-04
 
