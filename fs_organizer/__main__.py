@@ -29,7 +29,7 @@ from .duplicates import (
 )
 from .journal import export_journal
 from .mover import _is_inside, _iter_files, age_policy_allows, move_file
-from .rules import is_ignored
+from .rules import is_ignored, normalize_path_key
 from .suggest import render_suggestions, suggestions
 from .undo import render_undo, undo
 from .watcher import Watcher
@@ -195,12 +195,14 @@ def organize_paths(
         try:
             if full.is_dir():
                 for path in _iter_files(full, recursive):
-                    key = str(path)
+                    # Canonical key: the same file named twice (two spellings
+                    # of one path) must be organized once, not twice.
+                    key = normalize_path_key(path)
                     if key not in seen:
                         seen.add(key)
                         candidates.append(path)
             elif full.is_file():
-                key = str(full)
+                key = normalize_path_key(full)
                 if key not in seen:
                     seen.add(key)
                     candidates.append(full)

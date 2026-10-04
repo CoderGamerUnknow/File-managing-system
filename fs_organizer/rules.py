@@ -1,8 +1,66 @@
-"""Rule-based file matching: extension rules and ignore glob patterns."""
+"""Rule-based file matching: extension rules and ignore glob patterns.
+
+Also owns :func:`normalize_path_key`, the single canonical form for
+"which file/directory is this?" comparisons (see its docstring).
+"""
 from __future__ import annotations
 
 import fnmatch
+import os
 from pathlib import Path
+
+
+def strip_extended_prefix(p: Path | str) -> str:
+    """Drop the Windows extended-length prefix, keeping the original spelling.
+
+    ``\\\\?\\C:\\...`` -> ``C:\\...`` and ``\\\\?\\UNC\\server\\share`` ->
+    ``\\\\server\\share``. Unlike :func:`normalize_path_key` this does NOT fold
+    case, so it is the one to use when the original spelling matters (the
+    journal's category label, for instance).
+
+    Pure string work - no filesystem access, never raises.
+    """
+    s = str(p)
+    while True:
+        if s.startswith("\\\\?\\UNC\\"):
+            s = "\\\\" + s[8:]
+        elif s.startswith("\\\\?\\"):
+            s = s[4:]
+        else:
+            return s
+
+
+def normalize_path_key(p: Path | str) -> str:
+    """Canonical string identity for a path - the ONLY form used to key state.
+
+    Windows ``Path.resolve()`` intermittently returns the extended-path form
+    (``\\\\?\\C:\\...``) depending on what exists at resolve time, so the same
+    file can spell two different ways within a single run. Any map, set, or
+    cache keyed by a raw ``Path`` would then treat one file as two (the
+    original data-loss bug: flaw #51). This strips the extended prefix (and its
+    UNC variant) and folds case, so every spelling of one path produces one
+    key.
+
+    Pure string work - no filesystem access, never raises.
+    """
+    return os.path.normcase(strip_extended_prefix(p))
+
+
+def is_under(key: str, root_key: str) -> bool:
+    """True if canonical *key* is *root_key* itself or lives beneath it.
+
+    Both arguments must be :func:`normalize_path_key` output. This is the one
+    correct way to do a prefix test on those keys: naively appending
+    ``os.sep`` to a root that already ends in a separator (``/`` or ``C:\\``)
+    builds a prefix (``//`` / ``c:\\\\``) that NO child path can match, which
+    would silently make the watcher ignore every event - or let the loop
+    guard miss the organizer's own output - when watching a filesystem or
+    drive root.
+    """
+    if key == root_key:
+        return True
+    prefix = root_key if root_key.endswith(os.sep) else root_key + os.sep
+    return key.startswith(prefix)
 
 
 def is_ignored(path: Path, ignore_patterns: list[str]) -> bool:

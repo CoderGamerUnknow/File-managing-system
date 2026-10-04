@@ -6,12 +6,12 @@ dicts; the CLI or tests can consume the same builders directly.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 
 from . import journal
 from .mover import plan
+from .rules import normalize_path_key
 
 
 def _walk_bounded(root: Path, max_files: int) -> tuple[list[Path], bool]:
@@ -147,7 +147,12 @@ def _journal_dates(config) -> dict[str, float]:
         dest = entry.get("dest")
         ts = entry.get("ts")
         if isinstance(dest, str) and isinstance(ts, (int, float)):
-            out[os.path.normcase(dest)] = float(ts)
+            # Canonical key (strips the Windows extended-path form, folds
+            # case): the journal's dest and the walked path can spell the
+            # same file two ways, and a miss here silently falls back to
+            # mtime - mislabeling the creation date the journal exists to
+            # provide (same class as flaw #51).
+            out[normalize_path_key(dest)] = float(ts)
     return out
 
 
@@ -177,7 +182,7 @@ def files_payload(config, max_files: int = 2000) -> dict:
             stat = path.stat()
         except OSError:
             continue
-        created = journal_dates.get(os.path.normcase(str(path)))
+        created = journal_dates.get(normalize_path_key(path))
         if created is None:
             created = getattr(stat, "st_birthtime", None) or stat.st_mtime
         rows.append({

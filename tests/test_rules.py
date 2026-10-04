@@ -1,8 +1,37 @@
 """Tests for rule-based extension matching and ignore patterns."""
+import os
 from pathlib import Path
 
-from fs_organizer.rules import is_ignored, match_extension
+from fs_organizer.rules import is_ignored, is_under, match_extension, normalize_path_key
 
+
+def test_is_under_self_child_and_sibling(tmp_path):
+    root = normalize_path_key(tmp_path)
+    child = normalize_path_key(tmp_path / "a" / "b.txt")
+    sibling = normalize_path_key(tmp_path.parent / "elsewhere" / "b.txt")
+    assert is_under(root, root)
+    assert is_under(child, root)
+    assert not is_under(sibling, root)
+    # A sibling whose name merely STARTS with the root's name is not inside.
+    almost = normalize_path_key(Path(str(tmp_path) + "-other") / "x")
+    assert not is_under(almost, root)
+
+
+def test_is_under_tolerates_root_already_ending_in_separator(tmp_path):
+    """Appending os.sep to a root that already ends in one builds a prefix
+    ('//' or 'c:\\\\') that no child path can match — which would make the
+    watcher ignore every event (and the loop guard miss its own output) when
+    the watched/target root IS a filesystem or drive root."""
+    # Filesystem root itself: '/' on POSIX, '\\' on Windows.
+    fs_root = normalize_path_key(Path(os.sep))
+    child = normalize_path_key(Path(os.sep).joinpath("tmp", "x.txt"))
+    assert fs_root.endswith(os.sep)
+    assert is_under(child, fs_root)
+
+    # A root spelled with a trailing separator behaves like the bare root.
+    bare = normalize_path_key(tmp_path)
+    file_key = normalize_path_key(tmp_path / "a.txt")
+    assert is_under(file_key, bare + os.sep)
 
 def test_match_simple_extension(tmp_path):
     rules = {".txt": "Documents", ".png": "Images"}

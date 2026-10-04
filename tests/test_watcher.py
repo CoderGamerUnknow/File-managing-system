@@ -1,7 +1,8 @@
 """Tests for the Organizer decision logic and event handler wiring."""
+import time
 from pathlib import Path
 
-from fs_organizer.watcher import Organizer, _EventHandler
+from fs_organizer.watcher import Organizer, Watcher, _EventHandler
 from helpers import make_config
 
 
@@ -138,3 +139,57 @@ class TestEventHandler:
         handler = _EventHandler(Organizer(make_config(tmp_path)), d, [tmp_path / "watch"])
         handler.on_created(DirCreatedEvent(str(tmp_path / "watch" / "subdir")))
         assert d.scheduled == []
+
+
+class TestDispatchKey:
+    def test_alias_spellings_share_one_key(self, tmp_path):
+        """resolve() folds ALIASES of one file (a '..' segment, a symlinked
+        watch folder) into one key; normalize_path_key then folds the
+        extended-path/case spelling resolve() emits intermittently. Dropping
+        either half re-opens flaw #51's family: one file, two keys, two
+        dispatched moves and a 'a (1).txt' copy."""
+        p = make_file(tmp_path, "a.txt")
+        alias = tmp_path / "watch" / ".." / "watch" / "a.txt"
+        assert Watcher._dispatch_key(p) == Watcher._dispatch_key(alias)
+
+        # Distinct files keep distinct keys.
+        other = make_file(tmp_path, "b.txt")
+        assert Watcher._dispatch_key(p) != Watcher._dispatch_key(other)
+
+
+class TestResumeDispatchesOriginalSpelling:
+    def test_held_map_stores_scheduled_path_not_folded_key(self, tmp_path):
+        """resume() must dispatch the path AS SCHEDULED. Rebuilding it from
+        the canonical key hands the mover a case-folded src.name, and the
+        destination is named after src.name — a pause/resume would then
+        RENAME the file to lowercase on Windows (the journal-category case
+        bug's twin)."""
+        cfg = make_config(tmp_path)
+        cfg.file_stable_seconds = 0.05
+        src = make_file(tmp_path, "MiXeD.txt")
+
+        watcher = Watcher(cfg)
+        watcher.start()
+        try:
+            watcher.pause()
+            watcher.debouncer.schedule(src)
+            deadline = time.monotonic() + 5
+            while not watcher._held and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert watcher._held, "path was not held while paused"
+
+            ((key, held_path),) = watcher._held.items()
+            assert held_path.name == "MiXeD.txt", (
+                f"held map lost the original spelling (stored {held_path.name!r}); "
+                "resume would rename the file"
+            )
+            assert key  # canonical key is present alongside the value
+
+            watcher.resume()
+            deadline = time.monotonic() + 10
+            while src.exists() and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert not src.exists(), "resumed path was not dispatched"
+            assert (tmp_path / "out" / "Documents" / "MiXeD.txt").exists()
+        finally:
+            watcher.stop()

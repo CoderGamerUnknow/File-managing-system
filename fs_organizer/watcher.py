@@ -12,7 +12,7 @@ from .ai import classify_with_ai
 from .config import Config
 from .mover import _is_inside, move_file
 from .pool import Debouncer, WorkerPool
-from .rules import is_ignored
+from .rules import is_ignored, is_under, normalize_path_key
 
 logger = logging.getLogger("fs_organizer")
 
@@ -31,7 +31,7 @@ class Organizer:
         self.activity = activity
         self._retry_lock = threading.Lock()
         # path -> attempts used so far (only while a file is being retried).
-        self._lock_retries: dict[Path, int] = {}
+        self._lock_retries: dict[str, int] = {}
         # Set by Watcher after construction; re-arms the debouncer for a path
         # (used to retry locked files after their stability window).
         self.reschedule = None  # Callable[[Path], None]
@@ -39,7 +39,7 @@ class Organizer:
     def handle(self, path: Path) -> None:
         if not path.is_file():
             with self._retry_lock:
-                self._lock_retries.pop(path, None)  # file gone; drop retry state
+                self._lock_retries.pop(normalize_path_key(path), None)  # file gone; drop retry state
             return
         # V3 quiet hours: outside the configured window the organizer simply
         # does not act. The file is not held — it stays in the watch folder
@@ -81,9 +81,12 @@ class Organizer:
             self._retry_locked(path)
         else:
             # Any definitive outcome (moved, skipped, dry-run) ends the retry
-            # cycle for this path.
+            # cycle for this path. Key MUST be canonical: _lock_retries is
+            # keyed by normalize_path_key(), so popping with the raw Path
+            # never matched and a completed move left its (possibly
+            # exhausted) retry state behind forever.
             with self._retry_lock:
-                self._lock_retries.pop(path, None)
+                self._lock_retries.pop(normalize_path_key(path), None)
 
     def _report(self, result, path: Path) -> None:
         """Feed the (optional) UI activity log with the move outcome."""
@@ -112,14 +115,14 @@ class Organizer:
         definitive outcome clears it (see handle()).
         """
         with self._retry_lock:
-            attempts = self._lock_retries.get(path, 0)
+            attempts = self._lock_retries.get(normalize_path_key(path), 0)
             if attempts < 0:
                 return  # already exhausted; do not re-arm again
             if attempts >= self.MAX_LOCK_RETRIES:
-                self._lock_retries[path] = -1  # exhausted sentinel
+                self._lock_retries[normalize_path_key(path)] = -1  # exhausted sentinel
                 exceeded = True
             else:
-                self._lock_retries[path] = attempts + 1
+                self._lock_retries[normalize_path_key(path)] = attempts + 1
                 exceeded = False
         if exceeded:
             logger.warning(
@@ -152,16 +155,33 @@ class _EventHandler(FileSystemEventHandler):
         # source side (a path the user deliberately moved out of a watched
         # folder) makes the organizer yank files from outside its scope, so
         # only destinations inside a watched folder are handled.
+        self._watch_roots: list[Path] = []
+        self._watch_keys: list[str] = []
+        self.set_watch_roots(watch_roots)
+
+    def set_watch_roots(self, watch_roots: list[Path]) -> None:
+        """Rebuild the resolved roots AND their canonical keys together.
+
+        These two lists must never drift apart: ``_in_watch_roots`` compares
+        against ``_watch_keys`` only, so updating ``_watch_roots`` alone (what
+        ``Watcher.apply_config`` did) left the handler matching the PREVIOUS
+        config's folders after a dashboard reload — events in a newly added
+        watch folder were rejected as out of scope and never scheduled.
+        """
         self._watch_roots = [Path(root).resolve() for root in watch_roots]
+        self._watch_keys = [normalize_path_key(root) for root in self._watch_roots]
 
     def _in_watch_roots(self, path: Path) -> bool:
         try:
             resolved = path.resolve()
         except OSError:
             return False
-        return any(
-            resolved == root or root in resolved.parents for root in self._watch_roots
-        )
+        # Compare canonical strings, not Path objects: resolve() hands back
+        # the extended-path form intermittently, and a mismatched spelling
+        # would make an in-folder event look out of scope (file never
+        # scheduled at all - same class as flaw #51).
+        key = normalize_path_key(resolved)
+        return any(is_under(key, root_key) for root_key in self._watch_keys)
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
@@ -193,7 +213,7 @@ class Watcher:
         self.pool = WorkerPool(num_workers=num_workers)
         self._paused = threading.Event()
         self._pause_lock = threading.Lock()
-        self._held: set[Path] = set()
+        self._held: dict[str, Path] = {}
 
         def _dispatch(path: Path) -> None:
             # The paused flag is read INSIDE _pause_lock, the same lock
@@ -201,9 +221,12 @@ class Watcher:
             # it outside the lock let a callback pass the check, block on the
             # lock while resume() swapped, then insert into the fresh _held
             # set — a path no resume would ever dispatch (flaw #47).
+            key = self._dispatch_key(path)
             with self._pause_lock:
                 if self._paused.is_set():
-                    self._held.add(path)
+                    # Value is the path AS SCHEDULED (original spelling);
+                    # the key alone is case/extended-prefix folded.
+                    self._held[key] = path
                     was_held = True
                 else:
                     was_held = False
@@ -211,7 +234,7 @@ class Watcher:
                 if activity is not None:
                     activity.add("info", path, "held (paused)")
                 return
-            self.pool.submit_unique(self._dispatch_key(path), self.organizer.handle, path)
+            self.pool.submit_unique(key, self.organizer.handle, path)
 
         self.debouncer = Debouncer(
             delay_seconds=max(config.file_stable_seconds, 0.05),
@@ -259,11 +282,17 @@ class Watcher:
         """
         with self._pause_lock:
             self._paused.clear()
-            held, self._held = self._held, set()
+            held, self._held = self._held, {}
         if self.organizer.activity is not None and hasattr(self.organizer.activity, "set_paused"):
             self.organizer.activity.set_paused(False)
-        for path in held:
-            self.pool.submit_unique(self._dispatch_key(path), self.organizer.handle, path)
+        for key, path in held.items():
+            # The held map stores canonical key -> the path as it was
+            # scheduled. Re-deriving the path from the key would hand the
+            # organizer a case-folded spelling, and the mover names the
+            # destination after ``src.name`` — on Windows a pause/resume
+            # would then RENAME the file to lowercase. A file deleted while
+            # paused is dropped by handle()'s is_file() check.
+            self.pool.submit_unique(key, self.organizer.handle, path)
         logger.info("Resumed: %d held path(s) dispatched", len(held))
 
     def drain_held(self, timeout: float = 5.0) -> None:
@@ -275,13 +304,27 @@ class Watcher:
             self.resume()
 
     @staticmethod
-    def _dispatch_key(path: Path) -> Path:
-        """Dedupe key: the resolved path, so case/alias variants of one file
-        map to the same key."""
+    def _dispatch_key(path: Path) -> str:
+        """Canonical dedupe key: the resolved spelling, normalized.
+
+        Two steps, both needed:
+
+        * ``resolve()`` folds ALIASES of one file (a symlinked watch folder,
+          ``..`` segments, a relative spelling) into the same key, so one
+          file can't be dispatched twice into a ``(1)`` copy.
+        * :func:`normalize_path_key` then folds the extended-path form
+          (``\\\\?\\C:\\...``) and case, because Windows ``resolve()``
+          hands that back intermittently - a raw Path, or even ``resolve()``
+          alone, is NOT stable enough to key state on (flaw #51's family).
+
+        ``resolve()`` can raise OSError on a broken/unreadable path; the
+        unnormalized spelling still dedupes the common case.
+        """
         try:
-            return path.resolve()
+            resolved = path.resolve()
         except OSError:
-            return path
+            resolved = path
+        return normalize_path_key(resolved)
 
     def start(self) -> None:
         self.observer.start()
@@ -305,7 +348,7 @@ class Watcher:
             for folder in new_config.resolved_watch_folders():
                 self.observer.schedule(self.handler, str(folder), recursive=new_config.recursive)
                 logger.info("Watching %s", folder)
-            self.handler._watch_roots = [Path(root).resolve() for root in new_config.resolved_watch_folders()]
+            self.handler.set_watch_roots(new_config.resolved_watch_folders())
             self.organizer.config = new_config
         except Exception:
             # Full revert: the previous config object stays authoritative and

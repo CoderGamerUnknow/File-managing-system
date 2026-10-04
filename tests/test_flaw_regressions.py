@@ -849,8 +849,11 @@ class TestFlaw22TransientLockRetry:
         assert len(scheduled) == 2
         org.handle(src)          # attempt 3: succeeds
         assert state["n"] == 3
-        # Success clears retry state.
-        assert src not in org._lock_retries
+        # Success clears retry state (keyed by normalize_path_key, so the
+        # raw Path spelling would make this assertion vacuously true).
+        from fs_organizer.rules import normalize_path_key
+
+        assert normalize_path_key(src) not in org._lock_retries
         org.handle(src)
         assert state["n"] == 4  # one more real attempt, no retry bookkeeping left
 
@@ -911,10 +914,16 @@ class TestFlaw22TransientLockRetry:
         exhausted_before = dict(org._lock_retries)
         assert any(v < 0 for v in exhausted_before.values()), "sentinel missing"
 
-        # Now the move succeeds: state must be cleared.
+        # Now the move succeeds: state must be cleared. Keyed by
+        # normalize_path_key(src), NOT the raw Path — popping with the raw
+        # Path never matched a string key and left the state behind.
+        from fs_organizer.rules import normalize_path_key
+
         results.append(MoveResult(moved=True))
         org.handle(src)
-        assert src not in org._lock_retries, "success did not clear retry state"
+        assert normalize_path_key(src) not in org._lock_retries, (
+            "success did not clear retry state"
+        )
 
         # And a later lock can start a fresh cycle again.
         results.append(MoveResult(skipped=True, transient=True))
@@ -1975,6 +1984,30 @@ class TestFlaw40JournalCategory:
         (entry,) = self._rows(cfg)
         assert entry["category"] == "Projects"
 
+    def test_prefix_comparison_follows_platform_case_rules(self, tmp_path):
+        """The root-prefix match folds case ONLY where the file system does.
+
+        Windows: one case-insensitive volume, so a dest spelled with a
+        different case than the root is the same directory -> derive it.
+        POSIX: ``/root/A`` and ``/root/a`` are two different directories ->
+        NOT under the root -> "". ``str.casefold()`` would wrongly merge
+        them; ``os.path.normcase`` is the identity there.
+        """
+        from fs_organizer import journal
+
+        cfg = self._journal_cfg(tmp_path)
+        root = cfg.resolved_target_root()
+
+        flipped = Path(str(root).swapcase())
+        dest = flipped / "Documents" / "2026-09" / "a.txt"
+        expected = "Documents" if os.name == "nt" else ""
+        assert journal._category_from_dest(dest, cfg) == expected
+
+        # Same-spelling dest: the LABEL keeps the dest's original casing
+        # (never the folded lowercase form) on every platform.
+        same = root / "Documents" / "b.txt"
+        assert journal._category_from_dest(same, cfg) == "Documents"
+
     def test_dashboard_category_and_journal_agree(self, tmp_path):
         """End-to-end honesty: the dashboard's first-segment category and the
         journal's recorded category must match for a date-nested move."""
@@ -2303,7 +2336,7 @@ class TestFlaw47ResumeHeldSwapRace:
             time.sleep(0.2)
             watcher.resume()
             with watcher._pause_lock:
-                assert watcher._held == set(), "paths stranded in _held after resume"
+                assert watcher._held == {}, "paths stranded in _held after resume"
             deadline = time.monotonic() + 10
             while any(p.exists() for p in sources) and time.monotonic() < deadline:
                 time.sleep(0.05)

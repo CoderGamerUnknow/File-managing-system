@@ -37,7 +37,7 @@ from pathlib import Path
 
 from . import journal
 from .config import Config
-from .rules import is_ignored
+from .rules import is_ignored, is_under, normalize_path_key
 
 __all__ = [
     "MoveResult",
@@ -85,29 +85,23 @@ def _lock_for(directory: Path) -> threading.Lock:
 
 
 def _normalize_for_compare(p: Path) -> str:
-    """Normalize a path for containment checks.
+    """Normalize a path for containment checks and identity keys.
 
-    ``Path.resolve()`` intermittently returns Windows extended-path form
-    (``\\\\?\\C:\\...``) depending on what exists at resolve time, which made
-    ``is_relative_to`` refuse destinations that were in fact inside the
-    target root. Strip any repeated prefix (a caller may add one on top of
-    an already-extended resolve) and fold case so the guard is stable.
+    Thin alias for :func:`fs_organizer.rules.normalize_path_key`, which owns
+    the canonical form every state key must use. `Path.resolve()`
+    intermittently returns the Windows extended-path form depending on what
+    exists at resolve time, which made `is_relative_to` refuse destinations
+    that were in fact inside the target root, and made one destination take
+    two different locks (flaw #51). Kept as a private name for the mover's
+    internal callers.
     """
-    s = str(p)
-    while True:
-        if s.startswith("\\\\?\\UNC\\"):
-            s = "\\\\" + s[8:]
-        elif s.startswith("\\\\?\\"):
-            s = s[4:]
-        else:
-            break
-    return os.path.normcase(s)
+    return normalize_path_key(p)
+
 
 
 def _is_inside(child: Path, root: Path) -> bool:
     """True if *child* equals or lives under *root* (prefix/case tolerant)."""
-    c, r = _normalize_for_compare(child), _normalize_for_compare(root)
-    return c == r or c.startswith(r + os.sep)
+    return is_under(_normalize_for_compare(child), _normalize_for_compare(root))
 
 
 @dataclass

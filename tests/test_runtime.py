@@ -226,6 +226,16 @@ class TestLiveReload:
         assert watcher.organizer.config is new_cfg
         assert watcher.observer.scheduled == [(str(other), False)]
 
+        # The handler's canonical key list must follow the roots:
+        # _in_watch_roots() compares KEYS only, so a stale key list would
+        # reject every event from the newly watched folder and keep
+        # accepting events from the old one after a dashboard reload.
+        from fs_organizer.rules import normalize_path_key
+
+        assert watcher.handler._watch_keys == [normalize_path_key(other.resolve())]
+        assert watcher.handler._in_watch_roots(other / "new.txt") is True
+        assert watcher.handler._in_watch_roots(tmp_path / "watch" / "old.txt") is False
+
     def test_apply_config_failure_restores_old(self, tmp_path, monkeypatch):
         import fs_organizer.watcher as watcher_mod
 
