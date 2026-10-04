@@ -8,6 +8,9 @@ on:
     # windows py3.13) ever seeing its code.
     tags: ["v*"]
   pull_request:
+  # On-demand runs for any ref: this is how a specific commit gets a fresh
+  # ubuntu (py3.9/py3.13) + windows (py3.13) result without pushing anything.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -99,3 +102,45 @@ jobs:
             smoke_*.log
           if-no-files-found: ignore
           retention-days: 7
+
+  # Test what actually ships: build the sdist + wheel, then install EACH one
+  # into a fresh venv and run the full suite against the installed package
+  # (scripts/verify_artifact.sh stages the tests outside the repo so the
+  # source tree cannot shadow site-packages). Without this job, only the
+  # source tree was ever exercised — the artifacts users install were not.
+  artifacts:
+    name: Artifacts · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist and wheel
+        shell: bash
+        run: python -m build
+
+      - name: Check metadata (twine)
+        shell: bash
+        run: python -m twine check --strict dist/*
+
+      - name: Verify wheel (install + full suite against it)
+        shell: bash
+        run: bash scripts/verify_artifact.sh "dist/*.whl" wheel
+
+      - name: Verify sdist (source build + full suite against it)
+        shell: bash
+        run: bash scripts/verify_artifact.sh "dist/*.tar.gz" sdist

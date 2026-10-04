@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **On-demand CI runs**: `ci.yml` now accepts `workflow_dispatch`, so any
+  ref can be given a fresh ubuntu (py3.9 / py3.13) + windows (py3.13)
+  result — plus the artifacts matrix below — without pushing anything.
+- **Artifacts are tested before they ship.** A new `artifacts` CI job (ubuntu
+  AND windows) builds the sdist + wheel, runs `twine check --strict`, then
+  installs **each** artifact into a fresh venv and runs the full suite
+  against the *installed* package via `scripts/verify_artifact.sh` — the
+  tests are staged outside the repo so the source tree cannot shadow
+  site-packages, which is what makes a green run mean "this artifact
+  works". The release pipeline gained the same `verify` matrix between
+  `build` and `attach`, so release assets are attached only after both
+  operating systems pass on both artifacts, and the sdist now goes through
+  a real source build on Linux (previously only the wheel was smoke-tested,
+  on one machine). The script's own "imported from site-packages" assertion
+  caught a cwd-shadowing hole in the first draft — fixed by running the
+  import check from a neutral directory.
+- **PyPI publishing path (dormant)**: `release.yml` gained a `publish` job
+  using trusted publishing (OIDC via `id-token: write`, no long-lived token
+  in the repository). It is skipped unless the repository variable
+  `PYPI_PUBLISH` is `true`, so tags stay green until the one-time publisher
+  registration on pypi.org is done — `docs/RELEASING.md` documents the two
+  steps (they need your PyPI login, so they cannot be automated from here).
+- `docs/RELEASING.md`: cutting a release, re-running/back-filling one,
+  on-demand CI, verifying artifacts locally, and enabling PyPI publishing.
+- `.gitignore`: the `venv-*` scratch environments created by
+  `scripts/verify_artifact.sh`.
+
 ## [0.4.1] — 2026-10-04
 
 The canonical path-key release: every map, set, and cache that answers

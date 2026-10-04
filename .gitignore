@@ -13,6 +13,7 @@ dist/
 htmlcov/
 
 # Local runtime artifacts
+venv-*/
 tmp/
 probe_out.log
 probe_ready.json

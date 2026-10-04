@@ -1,11 +1,20 @@
 name: Release
 
-# Builds the sdist + wheel for a version tag and attaches them to that tag's
-# GitHub release, so downloads are installable artifacts rather than only
-# GitHub's auto-generated source archives.
+# Builds, VERIFIES, and attaches installable artifacts for a version tag.
 #
-# Assets are attached ONLY after the Linux quality gate below passes: a tag
-# push does not run ci.yml (which watches branches), so without this gate a
+#   resolve  -> which tag (fails loudly if HEAD is not exactly a tag)
+#   test     -> Linux quality gate on the source tree (lint, tests, smokes)
+#   build    -> sdist + wheel, twine check, uploaded as a workflow artifact
+#   verify   -> ubuntu AND windows: install each artifact into a fresh venv
+#               and run the full suite against the INSTALLED package
+#               (scripts/verify_artifact.sh) — the sdist goes through a real
+#               source build on Linux, so nothing ships unexercised
+#   attach   -> only after verify: gh release create/upload (--clobber)
+#   publish  -> PyPI via trusted publishing; DORMANT until the repository
+#               variable PYPI_PUBLISH is set to 'true' (see docs/RELEASING.md)
+#
+# Assets are attached ONLY after the Linux quality gate passes: a tag push
+# does not run ci.yml (which watches branches), so without this gate a
 # release could ship code no Linux runner has ever tested.
 #
 # Manual runs (`workflow_dispatch`) take a `tag` input, which is how an
@@ -93,7 +102,7 @@ jobs:
           exit ${PIPESTATUS[0]}
 
   build:
-    name: Build and attach artifacts
+    name: Build artifacts
     needs: [resolve, test]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -118,25 +127,94 @@ jobs:
       - name: Check metadata (twine)
         run: python -m twine check --strict dist/*
 
-      # The artifacts must actually be installable, not just well-formed.
-      - name: Install the wheel and import it
-        shell: bash
-        run: |
-          pip install dist/*.whl
-          python -c "import fs_organizer; print('wheel OK, __version__ =', fs_organizer.__version__)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
 
-      - name: Attach artifacts to the GitHub release
+  # The gate that used to be a limitation: the sdist and the wheel are each
+  # installed into a fresh venv on BOTH operating systems and the whole suite
+  # is run against the installed package (source tree cannot shadow it).
+  verify:
+    name: Verify artifacts · ${{ matrix.os }}
+    needs: [resolve, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Verify wheel
+        shell: bash
+        run: bash scripts/verify_artifact.sh "dist/*.whl" wheel
+
+      - name: Verify sdist (source build)
+        shell: bash
+        run: bash scripts/verify_artifact.sh "dist/*.tar.gz" sdist
+
+  attach:
+    name: Attach artifacts to the release
+    needs: [resolve, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Create the release (if missing) and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           TAG="${{ needs.resolve.outputs.tag }}"
-          # Create the release if the tag does not have one yet; an existing
-          # release (created by hand or by an earlier run) just gets its
-          # assets replaced --clobber, so re-running is idempotent.
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --generate-notes
           fi
           gh release upload "$TAG" dist/* --clobber
           echo "Assets now on $TAG:"
           gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
+
+  # Dormant by default: set the repository variable PYPI_PUBLISH=true (and
+  # register this workflow as a trusted publisher on pypi.org — see
+  # docs/RELEASING.md) to publish. Skipped otherwise, so tags stay green.
+  publish:
+    name: Publish to PyPI (trusted publishing)
+    needs: [verify, build]
+    if: vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      id-token: write  # OIDC exchange for a short-lived PyPI token
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          print-hash: true
