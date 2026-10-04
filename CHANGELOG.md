@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-04
+
+The canonical path-key release: every map, set, and cache that answers
+"which file is this?" now goes through one normalized key
+(`rules.normalize_path_key`), plus the six follow-up fixes below — found by
+reviewing the refactor itself, and each one pinned by a regression test.
+
 ### Fixed
 
 - **Concurrent same-name moves could silently overwrite a file** (flaw #51).
@@ -26,6 +33,45 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   path. Verified with 12/12 clean 8-thread stress runs after the fix. The
   pre-fix and post-fix versions both pass the ordinary suite — only a
   concurrent test exposes this.
+- **Six bugs found reviewing the follow-up path-key refactor** — all the
+  same "two spellings of one path" class:
+
+  1. A definitive outcome (moved / skipped / dry-run) popped `_lock_retries`
+     with the raw `Path`, but the map is keyed by `normalize_path_key()` —
+     the pop never matched, so retry state (including the `MAX_LOCK_RETRIES`
+     exhausted sentinel) leaked forever and a later legitimate lock on that
+     file could never start a fresh retry cycle. The two assertions that
+     should have caught this compared a `Path` against *string* keys and
+     were vacuously true; both now assert on the canonical key.
+  2. `Watcher.apply_config` (the dashboard's reload action) rebuilt
+     `handler._watch_roots` but not the parallel `_watch_keys` that
+     `_in_watch_roots` actually compares against — after a reload, every
+     event from a newly added watch folder was rejected as out of scope and
+     never scheduled, while the removed folder kept matching. Both are now
+     rebuilt together by `_EventHandler.set_watch_roots()`.
+  3. `resume()` re-derived the path from the canonical key — and that key is
+     case-folded. The mover names the destination after `src.name`, so on
+     Windows a pause/resume silently **renamed the resumed file to
+     lowercase**. `_held` is now a `key -> scheduled path` map and resume
+     dispatches the original spelling (the journal-category case bug's twin).
+  4. `_dispatch_key` dropped `Path.resolve()` when it switched to canonical
+     strings, losing alias folding (a symlinked watch folder, `..`
+     segments): one file could take two keys and be dispatched twice — a
+     second move into a `(1)` copy. It now does `resolve()` **then**
+     `normalize_path_key()` (resolve alone is not stable — that was flaw
+     #51), with an `OSError` fallback to the unnormalized spelling.
+  5. `_in_watch_roots` and `_is_inside` appended `os.sep` to the root before
+     the prefix test, so a root that already ends in a separator (`/`,
+     `C:\`) produced a prefix (`//`, `c:\\`) no child path could match:
+     watching a filesystem or drive root silently matched nothing, and the
+     loop guard would have missed the organizer's own output. Both now use
+     the shared `rules.is_under()`.
+  6. `_category_from_dest` folded the root prefix with `str.casefold()`,
+     which on POSIX merges two genuinely different directories (`/root/A`
+     vs `/root/a`). It now folds with `os.path.normcase` — the identity on
+     POSIX, lowercase on Windows — the same fold every other key uses, while
+     the returned label keeps the destination's original casing
+     ("Documents", never "documents").
 
 ### Testing
 
@@ -47,6 +93,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New `TestFlaw51DestinationLockKey` in `tests/test_flaw_regressions.py`:
   deterministic (thread-free) regression tests pinning the lock-key
   canonicalization, including the plain vs `\\?\` spelling case.
+- New coverage for the six review fixes, each **mutation-verified** (the fix
+  was temporarily re-introduced and the test made to fail before restoring
+  it, so a green run proves the test can catch the bug): `is_under`
+  self/child/sibling and trailing-separator roots (`tests/test_rules.py`),
+  `_dispatch_key` alias folding and held-path spelling preservation
+  (`tests/test_watcher.py`), the `apply_config` watch-key sync
+  (`tests/test_runtime.py`), platform case rules for the journal category
+  (`tests/test_flaw_regressions.py`), plus the two `_lock_retries`
+  assertions re-strengthened from vacuous to canonical keys.
+- 514 passed, 1 skipped; `ruff check .` clean; `scripts/smoke_dryrun.py` and
+  `scripts/smoke_ui.py` both green (the CI gates).
 
 ## [0.4.0] — 2026-10-03
 
@@ -355,6 +412,8 @@ wins precedence, bare-vs-slash and Windows-backslash patterns, agreement
 across the one-shot pass, `plan_actions`, and the live organizer, and the
 `~`-expansion, including the narrow guard that keeps `~scan.pdf` a file-NAME
 glob instead of a username).
+
+[0.4.1]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.4.1
 
 [0.4.0]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.4.0
 
