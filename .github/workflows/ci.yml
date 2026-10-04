@@ -3,6 +3,10 @@ name: CI
 on:
   push:
     branches: [main]
+    # A tag push alone does not run branch workflows, so without this a
+    # release could be cut without the full matrix (ubuntu py3.9/py3.13 +
+    # windows py3.13) ever seeing its code.
+    tags: ["v*"]
   pull_request:
 
 permissions:

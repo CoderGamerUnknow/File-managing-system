@@ -123,6 +123,23 @@ reviewing the refactor itself, and each one pinned by a regression test.
 - 515 passed, 1 skipped; `ruff check .` clean; `scripts/smoke_dryrun.py` and
   `scripts/smoke_ui.py` both green (the CI gates).
 
+### Packaging
+
+- New `.github/workflows/release.yml`: pushing a `v*` tag now re-runs the
+  Linux quality gate (ruff, the full test suite, both smoke scripts) and
+  only then builds the sdist + wheel, checks them with
+  `twine check --strict`, installs the wheel as a smoke test, and attaches
+  both artifacts to that tag's GitHub release — creating the release with
+  generated notes if the tag has none yet. Re-runs are idempotent
+  (`--clobber`), and a manual `workflow_dispatch` takes a `tag` input so an
+  existing release can be back-filled with assets (used to attach v0.4.1's).
+  Releases now ship installable `pip install` artifacts instead of only
+  GitHub's auto-generated source archives.
+- `ci.yml` also runs on `v*` tag pushes: previously a tag alone triggered no
+  CI (the workflow watched `main` and pull requests only), so a release
+  could be cut without the full ubuntu/py3.9 + ubuntu/py3.13 +
+  windows/py3.13 matrix ever seeing its code.
+
 ## [0.4.0] — 2026-10-03
 
 The safety-valve + control release: undo, quarantine-based duplicate

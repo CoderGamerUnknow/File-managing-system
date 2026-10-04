@@ -1,0 +1,142 @@
+name: Release
+
+# Builds the sdist + wheel for a version tag and attaches them to that tag's
+# GitHub release, so downloads are installable artifacts rather than only
+# GitHub's auto-generated source archives.
+#
+# Assets are attached ONLY after the Linux quality gate below passes: a tag
+# push does not run ci.yml (which watches branches), so without this gate a
+# release could ship code no Linux runner has ever tested.
+#
+# Manual runs (`workflow_dispatch`) take a `tag` input, which is how an
+# existing release gets back-filled with assets.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and attach assets to (e.g. v0.4.1)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write  # gh release create/upload uses the workflow token
+
+jobs:
+  # Single source of truth for "which tag are we releasing": a tag push gives
+  # ref_name, a manual run gives the input. Fails loudly when HEAD is not
+  # exactly a tag instead of silently packaging the wrong commit.
+  resolve:
+    name: Resolve tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history so tags are available
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Confirm the checkout is exactly a tag
+        id: resolve
+        shell: bash
+        run: |
+          TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          if [ -z "$TAG" ]; then
+            echo "::error::HEAD is not exactly a tag. Pass 'tag' when running this workflow manually."
+            exit 1
+          fi
+          echo "Releasing tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Linux quality gate
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install package + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: python -m ruff check .
+
+      - name: Run unit / regression tests
+        shell: bash
+        run: |
+          python -m pytest -q --tb=short 2>&1 | tee pytest.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Smoke test — dry-run + graceful shutdown
+        shell: bash
+        run: |
+          python scripts/smoke_dryrun.py 2>&1 | tee smoke_dryrun.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Smoke test — web dashboard
+        shell: bash
+        run: |
+          python scripts/smoke_ui.py 2>&1 | tee smoke_ui.log
+          exit ${PIPESTATUS[0]}
+
+  build:
+    name: Build and attach artifacts
+    needs: [resolve, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install build tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Check metadata (twine)
+        run: python -m twine check --strict dist/*
+
+      # The artifacts must actually be installable, not just well-formed.
+      - name: Install the wheel and import it
+        shell: bash
+        run: |
+          pip install dist/*.whl
+          python -c "import fs_organizer; print('wheel OK, __version__ =', fs_organizer.__version__)"
+
+      - name: Attach artifacts to the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          TAG="${{ needs.resolve.outputs.tag }}"
+          # Create the release if the tag does not have one yet; an existing
+          # release (created by hand or by an earlier run) just gets its
+          # assets replaced --clobber, so re-running is idempotent.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --generate-notes
+          fi
+          gh release upload "$TAG" dist/* --clobber
+          echo "Assets now on $TAG:"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
