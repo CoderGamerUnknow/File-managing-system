@@ -146,9 +146,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
+      # Two checkouts on purpose: the verifier script may post-date a tag
+      # that is being back-filled (v0.4.1 predates
+      # scripts/verify_artifact.sh), so the TOOLING comes from the ref this
+      # workflow itself runs from, while the CODE + tests come from the tag
+      # being released. On a tag push both are the same commit.
+      - uses: actions/checkout@v5
+        with:
+          path: tooling
+
       - uses: actions/checkout@v5
         with:
           ref: ${{ needs.resolve.outputs.tag }}
+          path: pkg
 
       - uses: actions/setup-python@v6
         with:
@@ -157,15 +167,17 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: dist
-          path: dist/
+          path: pkg/dist
 
-      - name: Verify wheel
+      - name: Verify wheel (install + full suite against it)
         shell: bash
-        run: bash scripts/verify_artifact.sh "dist/*.whl" wheel
+        working-directory: pkg
+        run: bash ../tooling/scripts/verify_artifact.sh "dist/*.whl" wheel
 
-      - name: Verify sdist (source build)
+      - name: Verify sdist (source build + full suite against it)
         shell: bash
-        run: bash scripts/verify_artifact.sh "dist/*.tar.gz" sdist
+        working-directory: pkg
+        run: bash ../tooling/scripts/verify_artifact.sh "dist/*.tar.gz" sdist
 
   attach:
     name: Attach artifacts to the release
