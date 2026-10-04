@@ -279,6 +279,38 @@ class TestTildeExpansion:
         )
         assert cfg.category_for(src) == "Invoices"
 
+    def test_backslash_tilde_pattern_expands_under_posix_expanduser(
+        self, tmp_path, monkeypatch
+    ):
+        """Linux CI's failure mode, reproduced on every platform.
+
+        ``posixpath.expanduser`` only recognizes ``~`` at the start of a
+        string or ``~/...``: a backslash is a legal *filename* character on
+        POSIX, not a separator, so ``~\\Downloads\\...`` comes back
+        untouched. Expansion must therefore happen AFTER separators are
+        folded, or the rule silently never matches on Linux and the file
+        falls back to the global category (CI: ubuntu py3.9 + py3.13).
+        """
+        import posixpath
+
+        import fs_organizer.config as config_mod
+
+        home = tmp_path / "home"
+        (home / "Downloads" / "invoices").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
+        # Run the POSIX expander on this platform, exactly as Linux does.
+        monkeypatch.setattr(config_mod.os.path, "expanduser", posixpath.expanduser)
+
+        src = home / "Downloads" / "invoices" / "a.pdf"
+        src.write_text("x")
+        cfg = make_config(
+            tmp_path,
+            rules={".pdf": "Documents"},
+            sub_rules=[_subrule("~\\Downloads\\invoices\\**", [".pdf"], "Invoices")],
+        )
+        assert cfg.category_for(src) == "Invoices"
+
     def test_bare_tilde_filename_is_not_treated_as_a_username(self, tmp_path, monkeypatch):
         """``~scan.pdf`` is a file-NAME glob, never a home reference.
 

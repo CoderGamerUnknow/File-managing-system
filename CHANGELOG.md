@@ -72,6 +72,19 @@ reviewing the refactor itself, and each one pinned by a regression test.
      POSIX, lowercase on Windows — the same fold every other key uses, while
      the returned label keeps the destination's original casing
      ("Documents", never "documents").
+- **A Windows-style `~\…` sub-rule pattern silently never matched on
+  Linux/macOS.** `SubRule.match_pattern()` expanded the home reference
+  *before* folding backslashes, and `posixpath.expanduser` only recognizes
+  `~/` (a backslash is a legal filename character on POSIX), so
+  `~\Downloads\invoices\**` came back untouched and folded into a literal
+  `~/…` glob that never matches a real home directory — the file quietly
+  fell back to the global extension rule instead of the sub-rule's
+  category. Separators are now folded first, the resulting `~/…` pattern is
+  then expanded, and the result is folded again (Windows `expanduser`
+  returns native `\` separators). This was red on Linux CI for the two
+  pushes before this release and green on Windows, where `ntpath.expanduser`
+  accepts `~\`; the new test injects `posixpath.expanduser` so the POSIX
+  semantics are exercised on every platform.
 
 ### Testing
 
@@ -102,7 +115,12 @@ reviewing the refactor itself, and each one pinned by a regression test.
   (`tests/test_runtime.py`), platform case rules for the journal category
   (`tests/test_flaw_regressions.py`), plus the two `_lock_retries`
   assertions re-strengthened from vacuous to canonical keys.
-- 514 passed, 1 skipped; `ruff check .` clean; `scripts/smoke_dryrun.py` and
+- `tests/test_sub_rules.py::test_backslash_tilde_pattern_expands_under_posix_expanduser`
+  runs `posixpath.expanduser` on every platform, so the `~\` expansion bug
+  is reproducible on a Windows dev box and not only in Linux CI. Also
+  mutation-verified: with expand-before-fold restored it fails with exactly
+  CI's `assert 'Documents' == 'Invoices'`.
+- 515 passed, 1 skipped; `ruff check .` clean; `scripts/smoke_dryrun.py` and
   `scripts/smoke_ui.py` both green (the CI gates).
 
 ## [0.4.0] — 2026-10-03

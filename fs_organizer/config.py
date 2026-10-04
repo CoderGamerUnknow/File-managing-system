@@ -353,20 +353,31 @@ class SubRule:
           ``~\\...``) so ``~/Downloads/invoices/**`` behaves like every other
           path field in the config.
 
+        **Order matters: separators are folded BEFORE the expansion.**
+        ``posixpath.expanduser`` (Linux, macOS) only recognizes ``~`` at the
+        start of a string or ``~/...`` — a backslash is a legal *filename*
+        character there, so it is not a separator and ``~\\Downloads\\**``
+        would come back untouched, leaving the rule silently unable to match
+        (the file then falls back to the global category). Folding first
+        turns it into ``~/...``, which every platform's ``expanduser``
+        understands. The result is folded again because Windows
+        ``expanduser`` hands back native ``\\`` separators.
+
         The guard on the expansion is deliberate and NOT paranoia:
         ``os.path.expanduser("~scan.pdf")`` returns ``C:\\Users\\scan.pdf``
         on Windows, because CPython reads everything after a lone ``~`` as
         a *username*. A bare ``~name`` pattern carries no slash, so it is a
         file-NAME glob where ``~`` is a perfectly legal character — expanding
         it would silently rewrite the user's rule. So only a lone ``~`` or a
-        ``~`` immediately followed by a separator counts as home.
+        ``~`` immediately followed by a separator (after folding) counts as
+        home.
 
         ``pattern`` itself is left exactly as authored, so ``to_dict()``
         round-trips the user's own text and ``check --json`` never leaks an
         absolute home path.
         """
-        pattern = self.pattern
-        if pattern == "~" or pattern[:2] in ("~/", "~\\"):
+        pattern = self.pattern.replace("\\", "/")
+        if pattern == "~" or pattern.startswith("~/"):
             pattern = os.path.expanduser(pattern)
         return pattern.replace("\\", "/")
 
