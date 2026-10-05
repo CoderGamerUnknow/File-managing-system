@@ -4,7 +4,11 @@ All notable changes to fs-organizer are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.2] — 2026-10-05
+
+Patch release: one real bug in the age policy (a file whose mtime was a hair
+ahead of the clock was never organized), plus the local-Linux and
+publish-preflight tooling that was used to verify it.
 
 ### Added
 
@@ -35,14 +39,57 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `.gitignore`: the `venv-*` scratch environments created by
   `scripts/verify_artifact.sh`.
 - **Local Linux runs, no Docker**: `scripts/setup_local_linux.sh` rebuilds
-  an Alpine + Python 3.12 WSL2 distro from scratch, copies the repo into it
-  and installs the dev dependencies, so lint, the full suite and both smoke
-  scripts can be executed on Linux from a Windows box instead of only via
-  CI (`docs/TESTING.md`). Verified on this machine: `ruff check` clean,
-  512 passed / 4 skipped, `smoke_dryrun` and `smoke_ui` green — on musl,
-  which CI's glibc runners never cover. The default Alpine mirror is
-  chosen for speed because `dl-cdn.alpinelinux.org` measured ~3 KB/s here
-  against 150–500 KB/s for the default (`ALPINE_MIRROR` overrides it).
+  a WSL2 distro from scratch — Ubuntu 24.04 by default, the same glibc
+  userland CI runs, or Alpine with `--flavor alpine` — copies the repo into
+  it and installs the dev dependencies into `/root/venv`, so lint, the full
+  suite and both smoke scripts can be executed on Linux from a Windows box
+  instead of only via CI (`docs/TESTING.md`).
+- **Publish preflight**: `scripts/check_publish_ready.py` checks everything
+  the repository controls about the PyPI path (workflow name, the
+  `PYPI_PUBLISH` gate, `id-token: write`, no API token in the workflow,
+  version agreement between `pyproject.toml` and `__init__.py`, and — with a
+  token — the repository variable itself via the GitHub API) and then prints
+  the exact field values for the one step that cannot be automated: adding
+  the pending publisher on pypi.org. Exit code is non-zero only for a
+  repository-side problem.
+
+### Fixed
+
+- **A file whose mtime was a hair ahead of the clock was never organized.**
+  `AgePolicy.violates` computed `age = now - mtime` and rejected anything
+  with `age < min_age_seconds` — including a *negative* age. Under the default
+  policy `min_age_seconds` is 0 and documented as "no lower bound", but a
+  negative age still tripped it, so the file was reported as
+  `outside age policy` and left in place. Coarse filesystem timestamps, or a
+  clock stepped backwards under the process (WSL2 shares the Windows clock),
+  are enough to produce one. Negative ages are now clamped to 0, which still
+  fails a real positive `min_age_seconds` — a file that looks brand new is
+  still treated as brand new. Found by running the suite 8× on a glibc Linux
+  box after switching the local test box off Alpine: it reproduced roughly
+  1 run in 5, failing a different timing-sensitive test each time. Two
+  regression tests pin it, and both fail against the old code.
+
+### Changed
+
+- **`scripts/setup_local_linux.sh` provisions Ubuntu (glibc) by default**
+  instead of Alpine. A local musl run was never comparable to CI, which runs
+  `ubuntu-latest`; Ubuntu 24.04 is the same libc family, so a green local run
+  now means what a green CI run means. `--flavor alpine` keeps the musl check
+  as an extra portability pass.
+- **Mirrors are measured, not guessed.** The script probes each candidate
+  with a small ranged request and picks the fastest, falling back to the first
+  candidate when none answer inside the probe window (`--mirror` /
+  `ALPINE_MIRROR` / `UBUNTU_MIRROR` override). It also resolves the rootfs
+  and the Alpine repository series from the mirror's index instead of pinning
+  a version — the pinned `alpine-minirootfs-3.22.0` had been deleted from the
+  mirrors entirely (404), and Alpine 3.24's apk needs `v3.24/main`, not
+  `main`. Downloads are cached by size and resumable, with a raised pip
+  timeout: on a slow link pip's 15s default turns a truncated `/simple/`
+  page into a misleading "no matching distribution found".
+- `wsl.exe` is now invoked with argument rewriting disabled only for
+  paths meant for the guest, and with Windows-form paths for `--import`.
+  A single global setting corrupted one or the other, which is what made
+  `--import` fail with "the system cannot find the path specified".
 
 ## [0.4.1] — 2026-10-04
 
@@ -485,6 +532,8 @@ wins precedence, bare-vs-slash and Windows-backslash patterns, agreement
 across the one-shot pass, `plan_actions`, and the live organizer, and the
 `~`-expansion, including the narrow guard that keeps `~scan.pdf` a file-NAME
 glob instead of a username).
+
+[0.4.2]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.4.2
 
 [0.4.1]: https://github.com/CoderGamerUnknow/File-managing-system/releases/tag/v0.4.1
 

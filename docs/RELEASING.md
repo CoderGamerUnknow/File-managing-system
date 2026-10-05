@@ -68,12 +68,25 @@ bash scripts/verify_artifact.sh "dist/*.tar.gz" sdist
 
 Each installs the artifact into a fresh `venv-<label>/` and runs the whole
 suite against it from a temp directory, so the checkout cannot shadow
-site-packages. Works in Git Bash on Windows and in any Linux shell.
+site-packages. Works in Git Bash on Windows and in any Linux shell — and on
+Linux from a Windows box via `scripts/setup_local_linux.sh` (see
+`docs/TESTING.md`), which provisions the same glibc userland CI runs.
 
 ## Enabling PyPI publishing (one-time, needs your PyPI login)
 
-Two steps, both required; until they are done the `publish` job is skipped
-and nothing breaks.
+Check what is left first:
+
+```bash
+python scripts/check_publish_ready.py                    # offline checks
+GITHUB_TOKEN=… python scripts/check_publish_ready.py     # + the repo variable via API
+```
+
+It verifies everything the repository controls (workflow name, the
+`PYPI_PUBLISH` gate, `id-token: write`, that no API token is stored in the
+workflow, and that `pyproject.toml` and `fs_organizer/__init__.py` agree on
+the version), then prints the exact values for the one step that cannot be
+automated. Two steps remain, both required; until they are done the `publish`
+job is skipped and nothing breaks.
 
 1. **On pypi.org** — create the project if it does not exist yet, then
    *Account → Publishing → Add a new pending publisher*:
@@ -96,4 +109,4 @@ new one, run the Release workflow manually for that tag (the `publish` job
 will then run too).
 
 > Step 1 requires your pypi.org login, so it cannot be automated from the
-> repository side.
+> repository side. Everything else is verified by the preflight above.

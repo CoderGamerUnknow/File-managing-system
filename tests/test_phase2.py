@@ -18,6 +18,36 @@ class TestAgePolicy:
         src.write_text("x", encoding="utf-8")
         assert age_policy_allows(src, cfg) is True
 
+    def test_mtime_ahead_of_the_clock_is_not_a_policy_violation(self, tmp_path):
+        """An mtime slightly in the future must not wedge a just-written file.
+
+        Coarse filesystem timestamps (and any clock stepped backwards, e.g. a
+        NTP correction) leave a file's mtime a few milliseconds ahead of
+        ``time.time()``. A negative age used to satisfy ``age < 0`` and so
+        skipped the file under the DEFAULT policy, whose ``min_age_seconds`` is
+        0 and documented as "no lower bound" — the file then sat forever
+        unmoved. Seen on WSL2, which shares the Windows clock.
+        """
+        cfg = make_config(tmp_path)
+        src = tmp_path / "watch" / "just_written.txt"
+        src.write_text("x", encoding="utf-8")
+        now = time.time()
+        ahead = now + 0.05  # the clock ticked backwards under us
+        os.utime(src, (ahead, ahead))
+
+        assert age_policy_allows(src, cfg, now=now) is True
+        assert move_file(src, "Documents", cfg).moved
+
+    def test_min_age_still_blocks_a_future_mtime(self, tmp_path):
+        """Clamping to 0 must not weaken a real lower bound."""
+        cfg = make_config(tmp_path)
+        cfg.age_policy = AgePolicy(min_age_seconds=3600)
+        src = tmp_path / "watch" / "ahead.txt"
+        src.write_text("x", encoding="utf-8")
+        ahead = time.time() + 0.05
+        os.utime(src, (ahead, ahead))
+        assert age_policy_allows(src, cfg, now=time.time()) is False
+
     def test_min_age_blocks_too_new(self, tmp_path):
         cfg = make_config(tmp_path)
         cfg.age_policy = AgePolicy(min_age_seconds=3600)

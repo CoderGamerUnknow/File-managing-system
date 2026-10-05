@@ -185,8 +185,16 @@ class AgePolicy:
         }
 
     def violates(self, mtime: float, now: float) -> bool:
-        """True when the file's age is outside the allowed window."""
-        age = now - mtime
+        """True when the file's age is outside the allowed window.
+
+        A negative age (an mtime ahead of the clock — coarse filesystem
+        timestamps, or a clock stepped backwards under us) is clamped to 0:
+        such a file is at worst brand new, so it still fails a positive
+        ``min_age_seconds`` but must not fail the *default* policy, where
+        ``min_age_seconds == 0`` means "no lower bound". Without the clamp a
+        clock nudge of a few milliseconds made fresh files unorganizable.
+        """
+        age = max(now - mtime, 0.0)
         return age < self.min_age_seconds or (
             self.max_age_days is not None and age > self.max_age_days * 86400.0
         )
